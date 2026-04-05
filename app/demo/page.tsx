@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { chatWithPixel, speakText, transcribeAudio } from "@/lib/api";
+import { chatWithPixel, speakText, transcribeAudio, saveMessage, isLoggedIn } from "@/lib/api";
 
 interface Message {
   role: "user" | "pixel";
@@ -105,6 +105,10 @@ export default function DemoPage() {
     try {
       const data = await chatWithPixel(text);
       setMessages((prev) => [...prev, { role: "pixel", content: data.reply }]);
+      if (isLoggedIn()) {
+        saveMessage("user", text).catch(() => {});
+        saveMessage("pixel", data.reply).catch(() => {});
+      }
       playAudio(data.reply);
     } catch {
       setMessages((prev) => [

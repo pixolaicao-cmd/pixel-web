@@ -3,7 +3,18 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getConversations, saveMessage, chatWithPixel, speakText, transcribeAudio } from "@/lib/api";
+import { getConversations, saveMessage, chatWithPixel, speakText, transcribeAudio, createNote } from "@/lib/api";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://skillful-mercy-production-881f.up.railway.app";
+function getToken() { return typeof window !== "undefined" ? localStorage.getItem("pixel_token") : null; }
+async function summarizeText(transcript: string) {
+  const token = getToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/summarize`, { method: "POST", headers, body: JSON.stringify({ transcript }) });
+  if (!res.ok) throw new Error("summarize failed");
+  return res.json() as Promise<{ summary: string; key_points: string[] }>;
+}
 
 interface Message {
   id?: string;
@@ -22,6 +33,8 @@ export default function ConversationsPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -39,6 +52,21 @@ export default function ConversationsPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  async function saveAsNote() {
+    if (messages.length === 0) return;
+    setSaving(true);
+    setSavedNote(false);
+    try {
+      const transcript = messages.map(m => `${m.role === "user" ? "我" : "Pixel"}: ${m.content}`).join("\n");
+      const { summary, key_points } = await summarizeText(transcript);
+      const title = "对话记录 " + new Date().toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      await createNote(title, transcript, summary, key_points);
+      setSavedNote(true);
+      setTimeout(() => setSavedNote(false), 3000);
+    } catch { /* empty */ }
+    setSaving(false);
+  }
 
   async function startRecording() {
     try {
@@ -120,7 +148,17 @@ export default function ConversationsPage() {
 
   return (
     <div className="flex h-[calc(100vh-10rem)] flex-col">
-      <h1 className="mb-4 text-2xl font-bold">Conversations</h1>
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Conversations</h1>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={saveAsNote}
+          disabled={saving || messages.length === 0}
+        >
+          {saving ? "Saving..." : savedNote ? "✅ Saved!" : "✨ Save as Note"}
+        </Button>
+      </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto rounded-xl border bg-muted/20 p-4">
         {messages.length === 0 && (
