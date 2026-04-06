@@ -17,6 +17,7 @@ class CreateNoteRequest(BaseModel):
     transcript: str = Field(default="")
     summary: str = Field(default="")
     key_points: list[str] = Field(default_factory=list)
+    markdown: Optional[str] = None  # 文档模式生成的完整 Markdown
 
 
 class UpdateNoteRequest(BaseModel):
@@ -34,7 +35,7 @@ async def list_notes(
     db = get_db()
     result = (
         db.table("notes")
-        .select("id, title, summary, created_at, updated_at")
+        .select("id, title, summary, key_points, markdown, created_at, updated_at")
         .eq("user_id", current_user["sub"])
         .order("created_at", desc=True)
         .limit(limit)
@@ -69,13 +70,16 @@ async def create_note(
 ):
     """创建笔记。"""
     db = get_db()
-    result = db.table("notes").insert({
+    row: dict = {
         "user_id": current_user["sub"],
         "title": req.title,
         "transcript": req.transcript,
         "summary": req.summary,
         "key_points": req.key_points,
-    }).execute()
+    }
+    if req.markdown is not None:
+        row["markdown"] = req.markdown
+    result = db.table("notes").insert(row).execute()
     return result.data[0]
 
 

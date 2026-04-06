@@ -142,11 +142,11 @@ export async function getNote(id: string) {
   return res.json();
 }
 
-export async function createNote(title: string, transcript: string, summary: string, keyPoints: string[]) {
+export async function createNote(title: string, transcript: string, summary: string, keyPoints: string[], markdown?: string) {
   const res = await fetch(`${API_BASE}/notes`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ title, transcript, summary, key_points: keyPoints }),
+    body: JSON.stringify({ title, transcript, summary, key_points: keyPoints, markdown }),
   });
   if (!res.ok) throw new Error("Failed to create note");
   return res.json();
@@ -188,9 +188,19 @@ export async function summarize(transcript: string): Promise<{ summary: string; 
   const res = await fetch(`${API_BASE}/summarize`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ transcript }),
+    body: JSON.stringify({ transcript, mode: "summary" }),
   });
   if (!res.ok) throw new Error("Summarize failed");
+  return res.json();
+}
+
+export async function summarizeDocument(transcript: string): Promise<{ summary: string; key_points: string[]; markdown: string }> {
+  const res = await fetch(`${API_BASE}/summarize`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ transcript, mode: "document" }),
+  });
+  if (!res.ok) throw new Error("Document summarize failed");
   return res.json();
 }
 

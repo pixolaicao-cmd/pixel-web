@@ -1,10 +1,12 @@
 """
 Pixel AI 挂件 — AI 引擎统一接口
-支持 Grok (xAI) 和 Claude (Anthropic) 双引擎，接口一致。
+引擎优先级：gemma（Google AI Studio）> ollama > grok > claude
 """
 
 from config import (
-    AI_ENGINE, XAI_API_KEY, XAI_BASE_URL, GROK_MODEL,
+    AI_ENGINE,
+    GOOGLE_API_KEY, GOOGLE_BASE_URL, GEMMA_MODEL,
+    XAI_API_KEY, XAI_BASE_URL, GROK_MODEL,
     ANTHROPIC_API_KEY, CLAUDE_MODEL,
     OLLAMA_BASE_URL, OLLAMA_MODEL,
 )
@@ -12,12 +14,32 @@ from config import (
 
 def chat_completion(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
     """统一的 AI 对话接口，根据 AI_ENGINE 配置自动选择引擎。"""
-    if AI_ENGINE == "ollama":
+    if AI_ENGINE == "gemma":
+        return _gemma_chat(system_prompt, user_message, max_tokens)
+    elif AI_ENGINE == "ollama":
         return _ollama_chat(system_prompt, user_message, max_tokens)
     elif AI_ENGINE == "grok":
         return _grok_chat(system_prompt, user_message, max_tokens)
     else:
         return _claude_chat(system_prompt, user_message, max_tokens)
+
+
+def _gemma_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+    """通过 Google AI Studio Gemma 4（OpenAI 兼容格式）。"""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=GOOGLE_API_KEY, base_url=GOOGLE_BASE_URL)
+
+    response = client.chat.completions.create(
+        model=GEMMA_MODEL,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    )
+
+    return response.choices[0].message.content
 
 
 def _grok_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
@@ -74,7 +96,9 @@ def _ollama_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
 
 def get_engine_name() -> str:
     """返回当前使用的引擎名称。"""
-    if AI_ENGINE == "ollama":
+    if AI_ENGINE == "gemma":
+        return f"Gemma ({GEMMA_MODEL})"
+    elif AI_ENGINE == "ollama":
         return f"Ollama ({OLLAMA_MODEL})"
     elif AI_ENGINE == "grok":
         return f"Grok ({GROK_MODEL})"
