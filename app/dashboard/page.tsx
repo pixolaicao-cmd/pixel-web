@@ -6,6 +6,7 @@ import { getStoredUser, getConversations, getNotes, getMemories } from "@/lib/ap
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({ conversations: 0, notes: 0, memories: 0 });
+  const [error, setError] = useState(false);
   const user = getStoredUser();
 
   useEffect(() => {
@@ -21,7 +22,9 @@ export default function DashboardPage() {
           notes: notes.notes?.length || 0,
           memories: mem.memories?.length || 0,
         });
-      } catch { /* ignore */ }
+      } catch {
+        setError(true);
+      }
     }
     loadStats();
   }, []);
@@ -39,6 +42,9 @@ export default function DashboardPage() {
       </h1>
       <p className="mt-1 text-muted-foreground">Here&apos;s your Pixel overview.</p>
 
+      {error && (
+        <p className="mt-4 text-sm text-muted-foreground">Could not load stats</p>
+      )}
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
         {cards.map((c) => (
           <Link

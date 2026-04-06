@@ -3,23 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getConversations, saveMessage, chatWithPixel, speakText, transcribeAudio, createNote } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://skillful-mercy-production-881f.up.railway.app";
-function getToken() { return typeof window !== "undefined" ? localStorage.getItem("pixel_token") : null; }
-async function summarizeText(transcript: string) {
-  const token = getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}/summarize`, { method: "POST", headers, body: JSON.stringify({ transcript }) });
-  if (!res.ok) throw new Error("summarize failed");
-  return res.json() as Promise<{ summary: string; key_points: string[] }>;
-}
+import { getConversations, saveMessage, chatWithPixel, speakText, transcribeAudio, createNote, summarize } from "@/lib/api";
 
 interface Message {
   id?: string;
   role: "user" | "pixel";
   content: string;
+  created_at?: string;
 }
 
 function detectLang(text: string): string {
@@ -59,7 +49,7 @@ export default function ConversationsPage() {
     setSavedNote(false);
     try {
       const transcript = messages.map(m => `${m.role === "user" ? "我" : "Pixel"}: ${m.content}`).join("\n");
-      const { summary, key_points } = await summarizeText(transcript);
+      const { summary, key_points } = await summarize(transcript);
       const title = "对话记录 " + new Date().toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
       await createNote(title, transcript, summary, key_points);
       setSavedNote(true);
@@ -167,13 +157,18 @@ export default function ConversationsPage() {
           </p>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
             <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${
               m.role === "user" ? "bg-primary text-primary-foreground" : "bg-card border shadow-sm"
             }`}>
               {m.role === "pixel" && <span className="mr-1.5">&#x1FA84;</span>}
               {m.content}
             </div>
+            {m.created_at && (
+              <span className="mt-0.5 text-[10px] text-muted-foreground">
+                {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
           </div>
         ))}
         {loading && (

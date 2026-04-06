@@ -3,19 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getNotes, createNote, deleteNote, transcribeAudio } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://skillful-mercy-production-881f.up.railway.app";
-function getToken() { return typeof window !== "undefined" ? localStorage.getItem("pixel_token") : null; }
-
-async function summarizeText(transcript: string): Promise<{ summary: string; key_points: string[] }> {
-  const token = getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}/summarize`, { method: "POST", headers, body: JSON.stringify({ transcript }) });
-  if (!res.ok) throw new Error("Summarize failed");
-  return res.json();
-}
+import { getNotes, createNote, deleteNote, transcribeAudio, summarize } from "@/lib/api";
 
 interface Note {
   id: string;
@@ -34,6 +22,7 @@ export default function NotesPage() {
   const [saving, setSaving] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [formError, setFormError] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
@@ -81,28 +70,34 @@ export default function NotesPage() {
   async function handleSummarize() {
     if (!newContent.trim()) return;
     setSaving(true);
+    setFormError(false);
     try {
-      const { summary, key_points } = await summarizeText(newContent);
+      const { summary, key_points } = await summarize(newContent);
       const title = newTitle || "Note " + new Date().toLocaleString();
       await createNote(title, newContent, summary, key_points);
       setNewTitle("");
       setNewContent("");
       setShowNew(false);
       await loadNotes();
-    } catch { /* empty */ }
+    } catch {
+      setFormError(true);
+    }
     setSaving(false);
   }
 
   async function handleCreate() {
     if (!newTitle.trim()) return;
     setSaving(true);
+    setFormError(false);
     try {
       await createNote(newTitle, newContent, "", []);
       setNewTitle("");
       setNewContent("");
       setShowNew(false);
       await loadNotes();
-    } catch { /* empty */ }
+    } catch {
+      setFormError(true);
+    }
     setSaving(false);
   }
 
@@ -161,6 +156,9 @@ export default function NotesPage() {
               {saving ? "Saving..." : "Save"}
             </Button>
           </div>
+          {formError && (
+            <p className="text-xs text-red-500">Something went wrong. Try again.</p>
+          )}
         </div>
       )}
 

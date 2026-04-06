@@ -171,6 +171,18 @@ export async function deleteMemory(id: string) {
   return res.json();
 }
 
+// ========== Summarize ==========
+
+export async function summarize(transcript: string): Promise<{ summary: string; key_points: string[] }> {
+  const res = await fetch(`${API_BASE}/summarize`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ transcript }),
+  });
+  if (!res.ok) throw new Error("Summarize failed");
+  return res.json();
+}
+
 // ========== Soul ==========
 
 export async function getSoul() {
