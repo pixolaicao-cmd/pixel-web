@@ -69,6 +69,17 @@ export async function chatWithPixel(
   message: string,
   userId: string = "web-demo"
 ): Promise<{ reply: string; engine: string }> {
+  // /ui/chat: auto-saves conversation + auto-extracts memories (requires auth)
+  // falls back to /chat if not logged in
+  const token = getToken();
+  if (token) {
+    const res = await fetch(`${API_BASE}/ui/chat`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ message }),
+    });
+    if (res.ok) return res.json();
+  }
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: authHeaders(),

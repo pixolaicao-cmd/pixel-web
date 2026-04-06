@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getConversations, saveMessage, chatWithPixel, speakText, transcribeAudio, createNote, summarize } from "@/lib/api";
+import { getConversations, chatWithPixel, speakText, transcribeAudio, createNote, summarize } from "@/lib/api";
 
 interface Message {
   id?: string;
@@ -78,11 +78,9 @@ export default function ConversationsPage() {
           if (text.trim()) {
             const userMsg: Message = { role: "user", content: text };
             setMessages((prev) => [...prev, userMsg]);
-            await saveMessage("user", text);
-            const data = await chatWithPixel(text);
+            const data = await chatWithPixel(text); // auto-saves via /ui/chat
             const pixelMsg: Message = { role: "pixel", content: data.reply };
             setMessages((prev) => [...prev, pixelMsg]);
-            await saveMessage("pixel", data.reply);
             try {
               const audioBlob = await speakText(data.reply, detectLang(data.reply));
               const url = URL.createObjectURL(audioBlob);
@@ -119,11 +117,9 @@ export default function ConversationsPage() {
     setLoading(true);
 
     try {
-      await saveMessage("user", text);
-      const data = await chatWithPixel(text);
+      const data = await chatWithPixel(text); // auto-saves via /ui/chat
       const pixelMsg: Message = { role: "pixel", content: data.reply };
       setMessages((prev) => [...prev, pixelMsg]);
-      await saveMessage("pixel", data.reply);
 
       // Play audio
       try {
