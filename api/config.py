@@ -32,7 +32,7 @@ XAI_BASE_URL = "https://api.x.ai/v1"
 GROK_MODEL = os.getenv("GROK_MODEL", "grok-3-mini-fast")
 
 # Claude 配置
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 # Ollama 配置（本地或远程，OpenAI 兼容格式）
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
