@@ -30,7 +30,7 @@ if not AI_ENGINE:
 
 # Google AI Studio — Gemma 4（OpenAI 兼容格式）
 GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMMA_MODEL     = os.getenv("GEMMA_MODEL", "gemma-4-e2b-it")
+GEMMA_MODEL     = os.getenv("GEMMA_MODEL", "gemma-4-31b-it")
 
 # Ollama — 本地 Gemma 4
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
