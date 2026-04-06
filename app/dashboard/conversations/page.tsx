@@ -25,6 +25,7 @@ export default function ConversationsPage() {
   const [recording, setRecording] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedNote, setSavedNote] = useState(false);
+  const [engineName, setEngineName] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -37,6 +38,9 @@ export default function ConversationsPage() {
       } catch { /* empty */ }
     }
     load();
+    // Fetch engine info
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://skillful-mercy-production-881f.up.railway.app";
+    fetch(`${apiBase}/status`).then(r => r.json()).then(d => setEngineName(d.engine_name)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -139,7 +143,14 @@ export default function ConversationsPage() {
   return (
     <div className="flex h-[calc(100vh-10rem)] flex-col">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Conversations</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Conversations</h1>
+          {engineName && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {engineName.includes("Ollama") ? "🤖 " : "⚡ "}{engineName}
+            </p>
+          )}
+        </div>
         <Button
           variant="outline"
           size="sm"
