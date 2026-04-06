@@ -1,0 +1,13 @@
+fastapi==0.115.12
+python-dotenv==1.1.0
+openai==1.78.1
+anthropic==0.52.0
+edge-tts==7.2.8
+httpx==0.28.1
+python-multipart==0.0.20
+supabase==2.15.2
+bcrypt==4.3.0
+pyjwt==2.10.1
+email-validator==2.2.0
+deepgram-sdk==4.0.0
+aiofiles==23.2.1

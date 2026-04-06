@@ -1,6 +1,6 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ||
-  "https://skillful-mercy-production-881f.up.railway.app";
+// Same-origin: API lives at /api/* in the same Vercel deployment
+// Override with NEXT_PUBLIC_API_URL for local dev pointing to Railway or local backend
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
