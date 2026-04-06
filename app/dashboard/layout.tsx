@@ -7,10 +7,8 @@ import { isLoggedIn, getStoredUser, logout } from "@/lib/api";
 
 const SIDEBAR_LINKS = [
   { href: "/dashboard", label: "Overview", icon: "\uD83C\uDFE0" },
-  { href: "/dashboard/conversations", label: "Conversations", icon: "\uD83D\uDCAC" },
+  { href: "/dashboard/memory", label: "记忆区", icon: "\uD83E\uDDE0" },
   { href: "/dashboard/notes", label: "Notes", icon: "\uD83D\uDCDD" },
-  { href: "/dashboard/memories", label: "Memories", icon: "\uD83E\uDDE0" },
-  { href: "/dashboard/soul", label: "Pixel Soul", icon: "\u2728" },
   { href: "/dashboard/settings", label: "Settings", icon: "\u2699\uFE0F" },
 ];
 
