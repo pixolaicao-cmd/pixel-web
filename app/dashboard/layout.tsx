@@ -4,39 +4,45 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { isLoggedIn, getStoredUser, logout } from "@/lib/api";
-
-const SIDEBAR_LINKS = [
-  { href: "/dashboard", label: "Overview", icon: "\uD83C\uDFE0" },
-  { href: "/dashboard/memory", label: "记忆区", icon: "\uD83E\uDDE0" },
-  { href: "/dashboard/notes", label: "Notes", icon: "\uD83D\uDCDD" },
-  { href: "/dashboard/settings", label: "Settings", icon: "\u2699\uFE0F" },
-];
+import { getLang, translations, type Lang } from "@/lib/i18n";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [lang, setLangState] = useState<Lang>("zh");
 
   useEffect(() => {
-    if (!isLoggedIn()) {
-      router.push("/login");
-      return;
-    }
+    if (!isLoggedIn()) { router.push("/login"); return; }
     setUser(getStoredUser());
+    setLangState(getLang());
+
+    const handler = () => setLangState(getLang());
+    window.addEventListener("pixel_lang_change", handler);
+    return () => window.removeEventListener("pixel_lang_change", handler);
   }, [router]);
 
   if (!user) return null;
 
+  const tr = translations[lang];
+
+  const LINKS = [
+    { href: "/dashboard", label: tr.overview, icon: "🏠" },
+    { href: "/dashboard/memory", label: tr.memory, icon: "🧠" },
+    { href: "/dashboard/notes", label: tr.notes, icon: "📝" },
+    { href: "/dashboard/settings", label: tr.settings, icon: "⚙️" },
+  ];
+
   return (
     <div className="flex min-h-[calc(100vh-4rem)]">
       {/* Sidebar */}
-      <aside className="hidden w-56 shrink-0 border-r bg-muted/20 md:block">
+      <aside className="hidden w-52 shrink-0 border-r bg-muted/20 md:flex md:flex-col">
         <div className="p-4">
           <p className="text-sm font-semibold">{user.name}</p>
           <p className="text-xs text-muted-foreground">{user.email}</p>
         </div>
-        <nav className="space-y-1 px-2">
-          {SIDEBAR_LINKS.map((l) => (
+        <nav className="flex-1 space-y-1 px-2">
+          {LINKS.map((l) => (
             <Link
               key={l.href}
               href={l.href}
@@ -51,19 +57,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
           ))}
         </nav>
-        <div className="mt-auto p-4">
+        <div className="p-4">
           <button
             onClick={() => { logout(); router.push("/"); }}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
-            Sign out
+            {tr.signOut}
           </button>
         </div>
       </aside>
 
       {/* Mobile nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50 flex border-t bg-background md:hidden">
-        {SIDEBAR_LINKS.slice(0, 5).map((l) => (
+        {LINKS.map((l) => (
           <Link
             key={l.href}
             href={l.href}
@@ -77,7 +83,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         ))}
       </div>
 
-      {/* Content */}
       <main className="flex-1 p-6 pb-20 md:pb-6">{children}</main>
     </div>
   );

@@ -5,34 +5,15 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getStoredUser, logout, getSoul, updateSoul } from "@/lib/api";
+import { getLang, setLang, translations, type Lang } from "@/lib/i18n";
 
 type Section = "pixel" | "account";
-
-const PERSONALITIES = [
-  { value: "friendly", label: "友好温暖", desc: "像贴心朋友，自然随意" },
-  { value: "calm", label: "平静舒缓", desc: "温和克制，让人放松" },
-  { value: "playful", label: "活泼幽默", desc: "轻松有趣，偶尔开玩笑" },
-  { value: "professional", label: "简洁专业", desc: "直接清晰，少废话" },
-];
-
-const LANGUAGES = [
-  { value: "auto", label: "自动识别（推荐）" },
-  { value: "zh", label: "中文" },
-  { value: "en", label: "English" },
-  { value: "no", label: "Norsk" },
-];
-
-const VOICE_STYLES = [
-  { value: "warm", label: "温柔" },
-  { value: "calm", label: "平稳" },
-  { value: "energetic", label: "活力" },
-  { value: "serious", label: "沉稳" },
-];
 
 export default function SettingsPage() {
   const router = useRouter();
   const user = getStoredUser();
   const [section, setSection] = useState<Section>("pixel");
+  const [lang, setLangState] = useState<Lang>("zh");
 
   const [soul, setSoul] = useState({
     pixel_name: "Pixel",
@@ -45,14 +26,41 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    setLangState(getLang());
+    const handler = () => setLangState(getLang());
+    window.addEventListener("pixel_lang_change", handler);
+    return () => window.removeEventListener("pixel_lang_change", handler);
+  }, []);
+
+  useEffect(() => {
     async function load() {
       try {
         const data = await getSoul();
         setSoul((prev) => ({ ...prev, ...data }));
+        // Sync UI language from saved soul language
+        if (data.language && data.language !== "auto") {
+          const map: Record<string, Lang> = { zh: "zh", en: "en", no: "no" };
+          if (map[data.language]) {
+            setLang(map[data.language]);
+            setLangState(map[data.language]);
+          }
+        }
       } catch { /* use defaults */ }
     }
     load();
   }, []);
+
+  function handleLangChange(val: string) {
+    setSoul({ ...soul, language: val });
+    // Also switch UI language
+    const map: Record<string, Lang> = { zh: "zh", en: "en", no: "no" };
+    if (map[val]) {
+      setLang(map[val]);
+      setLangState(map[val]);
+    } else {
+      // auto — keep current UI lang
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -65,9 +73,32 @@ export default function SettingsPage() {
     setSaving(false);
   }
 
+  const tr = translations[lang];
+
+  const PERSONALITIES = [
+    { value: "friendly", label: tr.friendly, desc: tr.friendlyDesc },
+    { value: "calm", label: tr.calm, desc: tr.calmDesc },
+    { value: "playful", label: tr.playful, desc: tr.playfulDesc },
+    { value: "professional", label: tr.professional, desc: tr.professionalDesc },
+  ];
+
+  const LANGUAGES = [
+    { value: "auto", label: tr.autoDetect },
+    { value: "zh", label: "中文" },
+    { value: "en", label: "English" },
+    { value: "no", label: "Norsk" },
+  ];
+
+  const VOICE_STYLES = [
+    { value: "warm", label: tr.warm },
+    { value: "calm", label: tr.calmVoice },
+    { value: "energetic", label: tr.energetic },
+    { value: "serious", label: tr.serious },
+  ];
+
   return (
     <div className="max-w-xl">
-      <h1 className="text-2xl font-bold">设置</h1>
+      <h1 className="text-2xl font-bold">{tr.settingsTitle}</h1>
 
       {/* Tab switcher */}
       <div className="mt-4 flex gap-1 rounded-lg border bg-muted/30 p-0.5 w-fit">
@@ -79,7 +110,7 @@ export default function SettingsPage() {
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          🪄 Pixel 个性
+          🪄 {tr.pixelPersonality}
         </button>
         <button
           onClick={() => setSection("account")}
@@ -89,20 +120,17 @@ export default function SettingsPage() {
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          账户
+          {tr.account}
         </button>
       </div>
 
       {/* Pixel 个性 */}
       {section === "pixel" && (
         <div className="mt-6 space-y-6">
-          <p className="text-sm text-muted-foreground">
-            个性越早设置越好——Pixel 会在此基础上慢慢学习你的习惯。
-          </p>
+          <p className="text-sm text-muted-foreground">{tr.personalityNote}</p>
 
-          {/* Name */}
           <div>
-            <label className="text-sm font-medium">Pixel 的名字</label>
+            <label className="text-sm font-medium">{tr.pixelName}</label>
             <Input
               className="mt-1"
               value={soul.pixel_name}
@@ -111,9 +139,8 @@ export default function SettingsPage() {
             />
           </div>
 
-          {/* Personality */}
           <div>
-            <label className="text-sm font-medium">说话风格</label>
+            <label className="text-sm font-medium">{tr.speakingStyle}</label>
             <div className="mt-2 grid grid-cols-2 gap-2">
               {PERSONALITIES.map((p) => (
                 <button
@@ -132,14 +159,13 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Language */}
           <div>
-            <label className="text-sm font-medium">常用语言</label>
+            <label className="text-sm font-medium">{tr.commonLanguage}</label>
             <div className="mt-2 flex flex-wrap gap-2">
               {LANGUAGES.map((l) => (
                 <button
                   key={l.value}
-                  onClick={() => setSoul({ ...soul, language: l.value })}
+                  onClick={() => handleLangChange(l.value)}
                   className={`rounded-full border px-4 py-1.5 text-sm transition ${
                     soul.language === l.value
                       ? "border-primary bg-primary/5 font-medium text-foreground"
@@ -152,9 +178,8 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Voice */}
           <div>
-            <label className="text-sm font-medium">声音风格</label>
+            <label className="text-sm font-medium">{tr.voiceStyle}</label>
             <div className="mt-2 flex flex-wrap gap-2">
               {VOICE_STYLES.map((v) => (
                 <button
@@ -172,23 +197,20 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Custom instructions */}
           <div>
-            <label className="text-sm font-medium">特别说明（可选）</label>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              例如：说话不要太长，帮我提醒喝水，用挪威语回答我...
-            </p>
+            <label className="text-sm font-medium">{tr.specialNote}</label>
+            <p className="mt-0.5 text-xs text-muted-foreground">{tr.specialNotePlaceholder}</p>
             <textarea
               className="mt-2 w-full rounded-lg border bg-background p-3 text-sm"
               rows={3}
-              placeholder="给 Pixel 的额外指令..."
+              placeholder={tr.pixelInstructions}
               value={soul.custom_prompt}
               onChange={(e) => setSoul({ ...soul, custom_prompt: e.target.value })}
             />
           </div>
 
           <Button onClick={handleSave} disabled={saving} className="w-full">
-            {saving ? "保存中..." : saved ? "✅ 已保存" : "保存设置"}
+            {saving ? tr.saving : saved ? tr.saved : tr.save}
           </Button>
         </div>
       )}
@@ -197,28 +219,26 @@ export default function SettingsPage() {
       {section === "account" && (
         <div className="mt-6 space-y-4">
           <div className="rounded-xl border bg-card p-5">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">账户信息</h2>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{tr.accountInfo}</h2>
             <div className="mt-3 space-y-2 text-sm">
-              <p><span className="text-muted-foreground">名字：</span>{user?.name}</p>
-              <p><span className="text-muted-foreground">邮箱：</span>{user?.email}</p>
+              <p><span className="text-muted-foreground">{tr.name}：</span>{user?.name}</p>
+              <p><span className="text-muted-foreground">{tr.email}：</span>{user?.email}</p>
             </div>
           </div>
 
           <div className="rounded-xl border bg-card p-5">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">设备</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              暂无设备绑定。硬件出货后可在此绑定 Pixel 实体。
-            </p>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{tr.device}</h2>
+            <p className="mt-2 text-sm text-muted-foreground">{tr.deviceNote}</p>
           </div>
 
           <div className="rounded-xl border border-red-200 bg-card p-5">
-            <h2 className="text-sm font-semibold text-red-500">退出登录</h2>
+            <h2 className="text-sm font-semibold text-red-500">{tr.signOut}</h2>
             <Button
               variant="destructive"
               className="mt-3"
               onClick={() => { logout(); router.push("/"); }}
             >
-              退出
+              {tr.signOutBtn}
             </Button>
           </div>
         </div>
