@@ -57,7 +57,7 @@ async def translate(
     tgt_name = LANG_NAME.get(tgt, tgt)
     prompt = TRANSLATE_PROMPT.format(target_lang_name=tgt_name)
 
-    translation = chat_completion(
+    translation = await chat_completion(
         system_prompt=prompt,
         user_message=req.text,
         max_tokens=512,

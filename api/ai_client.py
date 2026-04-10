@@ -1,5 +1,5 @@
 """
-Pixel AI 挂件 — AI 引擎统一接口
+Pixel AI 挂件 — AI 引擎统一接口（异步版）
 引擎优先级：gemma（Google AI Studio）> ollama > grok > claude
 """
 
@@ -12,25 +12,25 @@ from config import (
 )
 
 
-def chat_completion(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
+async def chat_completion(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
     """统一的 AI 对话接口，根据 AI_ENGINE 配置自动选择引擎。"""
     if AI_ENGINE == "gemma":
-        return _gemma_chat(system_prompt, user_message, max_tokens)
+        return await _gemma_chat(system_prompt, user_message, max_tokens)
     elif AI_ENGINE == "ollama":
-        return _ollama_chat(system_prompt, user_message, max_tokens)
+        return await _ollama_chat(system_prompt, user_message, max_tokens)
     elif AI_ENGINE == "grok":
-        return _grok_chat(system_prompt, user_message, max_tokens)
+        return await _grok_chat(system_prompt, user_message, max_tokens)
     else:
-        return _claude_chat(system_prompt, user_message, max_tokens)
+        return await _claude_chat(system_prompt, user_message, max_tokens)
 
 
-def _gemma_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
-    """通过 Google AI Studio Gemma 4（OpenAI 兼容格式）。"""
-    from openai import OpenAI
+async def _gemma_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+    """通过 Google AI Studio Gemma（OpenAI 兼容格式，异步）。"""
+    from openai import AsyncOpenAI
 
-    client = OpenAI(api_key=GOOGLE_API_KEY, base_url=GOOGLE_BASE_URL)
+    client = AsyncOpenAI(api_key=GOOGLE_API_KEY, base_url=GOOGLE_BASE_URL, max_retries=0)
 
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=GEMMA_MODEL,
         max_tokens=max_tokens,
         messages=[
@@ -42,13 +42,13 @@ def _gemma_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
     return response.choices[0].message.content
 
 
-def _grok_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
-    """通过 xAI Grok API（OpenAI 兼容格式）。"""
-    from openai import OpenAI
+async def _grok_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+    """通过 xAI Grok API（OpenAI 兼容格式，异步）。"""
+    from openai import AsyncOpenAI
 
-    client = OpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL)
+    client = AsyncOpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL, max_retries=0)
 
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=GROK_MODEL,
         max_tokens=max_tokens,
         messages=[
@@ -60,13 +60,13 @@ def _grok_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
     return response.choices[0].message.content
 
 
-def _claude_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
-    """通过 Anthropic Claude API。"""
+async def _claude_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+    """通过 Anthropic Claude API（异步）。"""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
-    response = client.messages.create(
+    response = await client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=max_tokens,
         system=system_prompt,
@@ -76,13 +76,13 @@ def _claude_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
     return response.content[0].text
 
 
-def _ollama_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
-    """通过 Ollama（OpenAI 兼容格式），支持本地和远程实例。"""
-    from openai import OpenAI
+async def _ollama_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+    """通过 Ollama（OpenAI 兼容格式，异步），支持本地和远程实例。"""
+    from openai import AsyncOpenAI
 
-    client = OpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL)
+    client = AsyncOpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, max_retries=0)
 
-    response = client.chat.completions.create(
+    response = await client.chat.completions.create(
         model=OLLAMA_MODEL,
         max_tokens=max_tokens,
         messages=[

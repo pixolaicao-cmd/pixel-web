@@ -93,8 +93,7 @@ async def _extract_and_save_memories(user_id: str, user_message: str, reply_text
     """后台任务：从对话中提取记忆并保存。"""
     try:
         conversation = f"用户：{user_message}\nPixel：{reply_text}"
-        raw = await asyncio.to_thread(
-            chat_completion,
+        raw = await chat_completion(
             _MEMORY_EXTRACT_PROMPT,
             conversation,
             256,
@@ -144,7 +143,7 @@ async def ui_chat(
     memory_context = _fetch_memories(current_user["sub"], req.message)
     system_prompt = PIXEL_SYSTEM_PROMPT + memory_context
 
-    reply_text = chat_completion(
+    reply_text = await chat_completion(
         system_prompt=system_prompt,
         user_message=req.message,
         max_tokens=512,
@@ -173,8 +172,7 @@ async def ui_intent(
     current_user: dict = Depends(get_current_user),
 ):
     """自然语言意图解析 — 将用户指令转为结构化动作"""
-    raw = await asyncio.to_thread(
-        chat_completion,
+    raw = await chat_completion(
         _INTENT_PROMPT,
         req.text,
         256,

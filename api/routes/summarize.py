@@ -44,7 +44,7 @@ async def summarize(
     try:
         if req.mode == "document":
             # 文档模式：返回完整结构化 Markdown
-            markdown = chat_completion(
+            markdown = await chat_completion(
                 system_prompt=DOCUMENT_SYSTEM_PROMPT,
                 user_message=req.transcript,
                 max_tokens=4096,
@@ -56,7 +56,7 @@ async def summarize(
                 clean_md = clean_md.rsplit("```", 1)[0].strip()
 
             # 同时提取一个简短摘要
-            summary_text = chat_completion(
+            summary_text = await chat_completion(
                 system_prompt=SUMMARIZE_SYSTEM_PROMPT,
                 user_message=req.transcript,
                 max_tokens=1024,
@@ -76,7 +76,7 @@ async def summarize(
             return SummarizeResponse(summary=summary, key_points=key_points, markdown=clean_md)
 
         # 默认摘要模式
-        raw_text = chat_completion(
+        raw_text = await chat_completion(
             system_prompt=SUMMARIZE_SYSTEM_PROMPT,
             user_message=req.transcript,
             max_tokens=2048,

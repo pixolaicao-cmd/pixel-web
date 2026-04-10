@@ -66,7 +66,7 @@ async def chat(
 
     system_prompt = PIXEL_SYSTEM_PROMPT + memory_context
 
-    reply_text = chat_completion(
+    reply_text = await chat_completion(
         system_prompt=system_prompt,
         user_message=req.message,
         max_tokens=512,
