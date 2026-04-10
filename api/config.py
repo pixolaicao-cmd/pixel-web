@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# API Keys
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-XAI_API_KEY       = os.getenv("XAI_API_KEY", "")
-GOOGLE_API_KEY    = os.getenv("GOOGLE_API_KEY", "")   # Google AI Studio
+# API Keys — strip() 去除意外的换行和空格
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+XAI_API_KEY       = os.getenv("XAI_API_KEY", "").strip()
+GOOGLE_API_KEY    = os.getenv("GOOGLE_API_KEY", "").strip()   # Google AI Studio
 
 # AI 引擎: "gemma" | "ollama" | "grok" | "claude"
 # 自动检测：有 GOOGLE_API_KEY → gemma，有 OLLAMA_BASE_URL → ollama，有 XAI_API_KEY → grok
@@ -44,8 +44,8 @@ GROK_MODEL   = os.getenv("GROK_MODEL", "grok-3-mini-fast")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 # Supabase
-SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+SUPABASE_URL         = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
 # JWT
 JWT_SECRET      = os.getenv("JWT_SECRET", "pixel-ai-secret-change-me")
