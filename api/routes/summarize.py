@@ -5,6 +5,7 @@ mode=document:       返回 {markdown, summary, key_points} — 结构化 Markdo
 """
 
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from auth import verify_token
@@ -15,6 +16,17 @@ from config import (
 from ai_client import chat_completion
 
 router = APIRouter()
+
+
+def _extract_json(text: str) -> str:
+    """从模型输出中提取 JSON，处理 <thought> 标签和代码块包装。"""
+    # 去掉 <thought>...</thought> 思考块（含内部换行）
+    text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL).strip()
+    # 去掉 ```json ... ``` 或 ``` ... ``` 包装
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1]
+        text = text.rsplit("```", 1)[0]
+    return text.strip()
 
 
 class SummarizeRequest(BaseModel):
@@ -49,8 +61,8 @@ async def summarize(
                 user_message=req.transcript,
                 max_tokens=4096,
             )
-            # 清理可能的 code fence
-            clean_md = markdown.strip()
+            # 清理 <thought> 标签和 code fence
+            clean_md = re.sub(r"<thought>.*?</thought>", "", markdown, flags=re.DOTALL).strip()
             if clean_md.startswith("```"):
                 clean_md = clean_md.split("\n", 1)[1]
                 clean_md = clean_md.rsplit("```", 1)[0].strip()
@@ -64,9 +76,7 @@ async def summarize(
             summary = ""
             key_points: list[str] = []
             try:
-                s = summary_text.strip()
-                if s.startswith("```"):
-                    s = s.split("\n", 1)[1].rsplit("```", 1)[0]
+                s = _extract_json(summary_text)
                 data = json.loads(s)
                 summary = data.get("summary", "")
                 key_points = data.get("key_points", [])
@@ -83,11 +93,7 @@ async def summarize(
         )
 
         try:
-            clean_text = raw_text.strip()
-            if clean_text.startswith("```"):
-                clean_text = clean_text.split("\n", 1)[1]
-                clean_text = clean_text.rsplit("```", 1)[0]
-
+            clean_text = _extract_json(raw_text)
             data = json.loads(clean_text)
             return SummarizeResponse(
                 summary=data.get("summary", raw_text),
