@@ -12,25 +12,35 @@ from config import (
 )
 
 
-async def chat_completion(system_prompt: str, user_message: str, max_tokens: int = 512) -> str:
+async def chat_completion(
+    system_prompt: str,
+    user_message: str,
+    max_tokens: int = 512,
+    json_mode: bool = False,   # True → 强制 JSON 输出（摘要专用）
+) -> str:
     """统一的 AI 对话接口，根据 AI_ENGINE 配置自动选择引擎。"""
     if AI_ENGINE == "gemma":
-        return await _gemma_chat(system_prompt, user_message, max_tokens)
+        return await _gemma_chat(system_prompt, user_message, max_tokens, json_mode)
     elif AI_ENGINE == "ollama":
-        return await _ollama_chat(system_prompt, user_message, max_tokens)
+        return await _ollama_chat(system_prompt, user_message, max_tokens, json_mode)
     elif AI_ENGINE == "grok":
         return await _grok_chat(system_prompt, user_message, max_tokens)
     else:
         return await _claude_chat(system_prompt, user_message, max_tokens)
 
 
-async def _gemma_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+async def _gemma_chat(
+    system_prompt: str,
+    user_message: str,
+    max_tokens: int,
+    json_mode: bool = False,
+) -> str:
     """通过 Google AI Studio Gemma（OpenAI 兼容格式，异步）。"""
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key=GOOGLE_API_KEY, base_url=GOOGLE_BASE_URL, max_retries=0)
 
-    response = await client.chat.completions.create(
+    kwargs: dict = dict(
         model=GEMMA_MODEL,
         max_tokens=max_tokens,
         messages=[
@@ -39,6 +49,11 @@ async def _gemma_chat(system_prompt: str, user_message: str, max_tokens: int) ->
         ],
     )
 
+    # json_mode → API 层强制 JSON，消除 <thought>/代码块干扰
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = await client.chat.completions.create(**kwargs)
     return response.choices[0].message.content
 
 
@@ -56,7 +71,6 @@ async def _grok_chat(system_prompt: str, user_message: str, max_tokens: int) -> 
             {"role": "user", "content": user_message},
         ],
     )
-
     return response.choices[0].message.content
 
 
@@ -72,17 +86,21 @@ async def _claude_chat(system_prompt: str, user_message: str, max_tokens: int) -
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
-
     return response.content[0].text
 
 
-async def _ollama_chat(system_prompt: str, user_message: str, max_tokens: int) -> str:
+async def _ollama_chat(
+    system_prompt: str,
+    user_message: str,
+    max_tokens: int,
+    json_mode: bool = False,
+) -> str:
     """通过 Ollama（OpenAI 兼容格式，异步），支持本地和远程实例。"""
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(api_key="ollama", base_url=OLLAMA_BASE_URL, max_retries=0)
 
-    response = await client.chat.completions.create(
+    kwargs: dict = dict(
         model=OLLAMA_MODEL,
         max_tokens=max_tokens,
         messages=[
@@ -90,7 +108,10 @@ async def _ollama_chat(system_prompt: str, user_message: str, max_tokens: int) -
             {"role": "user", "content": user_message},
         ],
     )
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
 
+    response = await client.chat.completions.create(**kwargs)
     return response.choices[0].message.content
 
 
