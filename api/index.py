@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import transcribe, chat, speak, summarize, translate, users, conversations, notes, memories, soul, ui
+from routes import transcribe, chat, speak, summarize, translate, users, conversations, notes, memories, soul, ui, voice, devices
 
 app = FastAPI(
     title="Pixel AI Backend",
@@ -45,6 +45,8 @@ app.include_router(notes.router,      prefix=PREFIX, tags=["Notes"])
 app.include_router(memories.router,   prefix=PREFIX, tags=["Memories"])
 app.include_router(soul.router,       prefix=PREFIX, tags=["Soul"])
 app.include_router(ui.router,         prefix=PREFIX, tags=["UI"])
+app.include_router(voice.router,      prefix=PREFIX, tags=["Voice"])
+app.include_router(devices.router,    prefix=PREFIX, tags=["Devices"])
 
 
 @app.get("/api/health")

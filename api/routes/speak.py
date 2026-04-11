@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 import edge_tts
 import io
 from auth import verify_token
-from config import OPENAI_API_KEY
+
+OPENAI_API_KEY = ""  # 备用，目前未启用
 
 router = APIRouter()
 
