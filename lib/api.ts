@@ -204,6 +204,33 @@ export async function summarizeDocument(transcript: string): Promise<{ summary: 
   return res.json();
 }
 
+// ========== Devices ==========
+
+export async function getDevices() {
+  const res = await fetch(`${API_BASE}/devices`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Failed to load devices");
+  return res.json() as Promise<{ devices: Device[] }>;
+}
+
+export async function unlinkDevice(deviceId: string) {
+  const res = await fetch(`${API_BASE}/devices/${encodeURIComponent(deviceId)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Failed to unlink device");
+  return res.json();
+}
+
+export interface Device {
+  id: string;
+  device_id: string;           // MAC address
+  model: string;
+  firmware_version: string;
+  paired_at: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+}
+
 // ========== Soul ==========
 
 export async function getSoul() {

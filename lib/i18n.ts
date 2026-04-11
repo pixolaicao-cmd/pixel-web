@@ -28,6 +28,7 @@ export const translations = {
     email: "邮箱",
     device: "设备",
     deviceNote: "暂无设备绑定。硬件出货后可在此绑定 Pixel 实体。",
+    devices: "设备",
     signOutBtn: "退出",
     // Personalities
     friendly: "友好温暖",
@@ -71,6 +72,7 @@ export const translations = {
     email: "Email",
     device: "Device",
     deviceNote: "No device linked yet. You can bind your Pixel device here when hardware ships.",
+    devices: "Devices",
     signOutBtn: "Sign Out",
     // Personalities
     friendly: "Friendly & Warm",
@@ -114,6 +116,7 @@ export const translations = {
     email: "E-post",
     device: "Enhet",
     deviceNote: "Ingen enhet tilkoblet ennå. Du kan koble til Pixel-enheten din her når maskinvaren er klar.",
+    devices: "Enheter",
     signOutBtn: "Logg ut",
     // Personalities
     friendly: "Vennlig og varm",
