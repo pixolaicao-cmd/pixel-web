@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { isLoggedIn, getStoredUser, logout } from "@/lib/api";
+import { isTokenValid, getStoredUser, logout } from "@/lib/api";
 import { getLang, translations, type Lang } from "@/lib/i18n";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -13,7 +13,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [lang, setLangState] = useState<Lang>("zh");
 
   useEffect(() => {
-    if (!isLoggedIn()) { router.push("/login"); return; }
+    if (!isTokenValid()) { router.push("/login"); return; }
     setUser(getStoredUser());
     setLangState(getLang());
 

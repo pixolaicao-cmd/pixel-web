@@ -2,9 +2,52 @@
 // Override with NEXT_PUBLIC_API_URL for local dev pointing to Railway or local backend
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
+// ── Token storage helpers ──────────────────────────────────
+// remember_me=true  → localStorage  (跨 session 持久)
+// remember_me=false → sessionStorage（关闭浏览器即清除）
+
+/** 解码 JWT payload，不做验证（签名在服务端验） */
+function decodeTokenExp(token: string): number | null {
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(b64));
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("pixel_token");
+  return localStorage.getItem("pixel_token") ?? sessionStorage.getItem("pixel_token");
+}
+
+/** token 存在 + 未过期 */
+export function isTokenValid(): boolean {
+  const token = getToken();
+  if (!token) return false;
+  const exp = decodeTokenExp(token);
+  if (exp !== null && Date.now() > exp) {
+    // 已过期，清理
+    logout();
+    return false;
+  }
+  return true;
+}
+
+/** 兼容旧调用 */
+export function isLoggedIn(): boolean {
+  return isTokenValid();
+}
+
+function storeAuth(data: { token: string; remember_me?: boolean } & Record<string, unknown>, rememberMe = true) {
+  const storage = rememberMe ? localStorage : sessionStorage;
+  const other   = rememberMe ? sessionStorage : localStorage;
+  // 清掉另一个 storage 里的旧 token（避免混淆）
+  other.removeItem("pixel_token");
+  other.removeItem("pixel_user");
+  storage.setItem("pixel_token", data.token);
+  storage.setItem("pixel_user", JSON.stringify(data));
 }
 
 function authHeaders(): Record<string, string> {
@@ -27,40 +70,62 @@ export async function register(email: string, password: string, name: string) {
     throw new Error(err.detail || "Registration failed");
   }
   const data = await res.json();
-  localStorage.setItem("pixel_token", data.token);
-  localStorage.setItem("pixel_user", JSON.stringify(data));
+  storeAuth(data, true); // 注册默认记住
   return data;
 }
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, rememberMe = true) {
   const res = await fetch(`${API_BASE}/users/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, remember_me: rememberMe }),
   });
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.detail || "Login failed");
   }
   const data = await res.json();
-  localStorage.setItem("pixel_token", data.token);
-  localStorage.setItem("pixel_user", JSON.stringify(data));
+  storeAuth(data, rememberMe);
   return data;
+}
+
+/** Google OAuth：跳转到后端 authorize 入口 */
+export function loginWithGoogle() {
+  window.location.href = `${API_BASE}/users/google/authorize`;
+}
+
+/**
+ * Google OAuth 回调页面（/auth/callback）用这个函数把 URL 参数写入 localStorage。
+ * 返回 true 表示成功写入。
+ */
+export function consumeOAuthCallback(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  if (!token) return false;
+  const data = {
+    token,
+    user_id:    params.get("user_id") ?? "",
+    email:      params.get("email")   ?? "",
+    name:       params.get("name")    ?? "",
+    remember_me: true,
+  };
+  storeAuth(data, true);
+  return true;
 }
 
 export function logout() {
   localStorage.removeItem("pixel_token");
   localStorage.removeItem("pixel_user");
+  sessionStorage.removeItem("pixel_token");
+  sessionStorage.removeItem("pixel_user");
 }
 
 export function getStoredUser() {
   if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem("pixel_user");
+  const raw =
+    localStorage.getItem("pixel_user") ?? sessionStorage.getItem("pixel_user");
   return raw ? JSON.parse(raw) : null;
-}
-
-export function isLoggedIn(): boolean {
-  return !!getToken();
 }
 
 // ========== Chat ==========

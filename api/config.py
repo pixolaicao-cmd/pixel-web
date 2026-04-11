@@ -48,9 +48,20 @@ SUPABASE_URL         = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
 # JWT
-JWT_SECRET      = os.getenv("JWT_SECRET", "pixel-ai-secret-change-me")
-JWT_ALGORITHM   = "HS256"
-JWT_EXPIRE_HOURS = 72
+JWT_SECRET            = os.getenv("JWT_SECRET", "pixel-ai-secret-change-me")
+JWT_ALGORITHM         = "HS256"
+JWT_EXPIRE_HOURS      = 72    # 默认：72小时（不勾选"记住我"时）
+JWT_EXPIRE_HOURS_LONG = 168   # 记住我：7天
+
+# Google OAuth（可选，不填则 Google 登录入口隐藏）
+GOOGLE_OAUTH_CLIENT_ID     = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+# 回调地址：本地 = http://localhost:3000/api/users/google/callback
+#           线上 = https://pixel-web-three.vercel.app/api/users/google/callback
+GOOGLE_OAUTH_REDIRECT_URI  = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    "https://pixel-web-three.vercel.app/api/users/google/callback",
+).strip()
 
 # Deepgram STT
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
