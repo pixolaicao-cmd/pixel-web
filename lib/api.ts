@@ -296,6 +296,54 @@ export interface Device {
   created_at: string;
 }
 
+// ========== Note Export ==========
+
+/** 触发文件下载（DOCX / TXT） */
+async function _downloadNote(noteId: string, format: "docx" | "txt") {
+  const res = await fetch(`${API_BASE}/notes/${noteId}/export/${format}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const match = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/i);
+  const filename = match ? decodeURIComponent(match[1]) : `note.${format}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export const exportNoteDocx = (id: string) => _downloadNote(id, "docx");
+export const exportNoteTxt  = (id: string) => _downloadNote(id, "txt");
+
+/** 打开打印/PDF 页（新标签页，用户 Ctrl+P 保存为 PDF） */
+export function exportNotePrint(id: string) {
+  window.open(`${API_BASE}/notes/${id}/export/print`, "_blank");
+}
+
+// ========== File Import ==========
+
+export async function importFileToMemory(
+  file: File,
+  category = "document",
+): Promise<{ memory_ids: string[]; chunks: number; total_chars: number; preview: string; filename: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("category", category);
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/memories/import`, { method: "POST", headers, body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || `Import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ========== Soul ==========
 
 export async function getSoul() {

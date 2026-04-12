@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getNotes, createNote, deleteNote, transcribeAudio, summarize, summarizeDocument } from "@/lib/api";
+import { getNotes, createNote, deleteNote, transcribeAudio, summarize, summarizeDocument, exportNoteDocx, exportNoteTxt, exportNotePrint, importFileToMemory } from "@/lib/api";
 
 interface Note {
   id: string;
@@ -36,6 +36,9 @@ export default function NotesPage() {
   const [formError, setFormError] = useState(false);
   const [docMode, setDocMode] = useState(false);
   const [previewMarkdown, setPreviewMarkdown] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
@@ -110,6 +113,22 @@ export default function NotesPage() {
     setSaving(false);
   }
 
+  async function handleFileImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await importFileToMemory(file);
+      setImportResult(`✅ "${res.filename}" imported — ${res.total_chars.toLocaleString()} chars saved to Memory`);
+    } catch (err) {
+      setImportResult(`❌ ${err instanceof Error ? err.message : "Import failed"}`);
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   async function handleCreate() {
     if (!newTitle.trim()) return;
     setSaving(true);
@@ -137,10 +156,34 @@ export default function NotesPage() {
     <div>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Notes</h1>
-        <Button onClick={() => setShowNew(!showNew)} variant={showNew ? "outline" : "default"}>
-          {showNew ? "Cancel" : "New Note"}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            title="Import PDF / Word / PPT / Excel into Memory"
+          >
+            {importing ? "Importing…" : "📎 Import to Memory"}
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,.pptx,.xlsx,.txt,.html,.md"
+            className="hidden"
+            onChange={handleFileImport}
+          />
+          <Button onClick={() => setShowNew(!showNew)} variant={showNew ? "outline" : "default"}>
+            {showNew ? "Cancel" : "New Note"}
+          </Button>
+        </div>
       </div>
+
+      {importResult && (
+        <p className={`mt-3 rounded-lg px-4 py-2 text-sm ${importResult.startsWith("✅") ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-red-500/10 text-red-600"}`}>
+          {importResult}
+        </p>
+      )}
 
       {/* 上次生成的文档快速下载 */}
       {previewMarkdown && (
@@ -234,22 +277,34 @@ export default function NotesPage() {
                   {n.markdown && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">Document</span>}
                 </p>
               </button>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => exportNotePrint(n.id)}
+                  className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Print / Save as PDF"
+                >PDF</button>
+                <button
+                  onClick={() => exportNoteDocx(n.id)}
+                  className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Download Word (.docx)"
+                >DOCX</button>
+                <button
+                  onClick={() => exportNoteTxt(n.id)}
+                  className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Download plain text"
+                >TXT</button>
                 {n.markdown && (
                   <button
                     onClick={() => downloadMarkdown(n.markdown!, n.title)}
-                    className="text-xs text-muted-foreground hover:text-primary"
+                    className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     title="Download Markdown"
-                  >
-                    ⬇ .md
-                  </button>
+                  >.md</button>
                 )}
+                <span className="mx-1 text-muted-foreground/30">|</span>
                 <button
                   onClick={() => handleDelete(n.id)}
                   className="text-xs text-muted-foreground hover:text-red-500"
-                >
-                  Delete
-                </button>
+                >Delete</button>
               </div>
             </div>
             {expanded === n.id && (
