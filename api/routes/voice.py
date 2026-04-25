@@ -120,13 +120,14 @@ def _fetch_memories(user_id: str, query: str, limit: int = 5) -> str:
         return ""
 
 
-def _fetch_recent_conversation(user_id: str, limit: int = 10) -> str:
-    """拉最近 N 条对话作为短期记忆，让 AI 保持连贯。"""
+def _fetch_recent_conversation(user_id: str, limit: int = 30) -> str:
+    """拉最近 N 条对话作为记忆上下文，让 AI 跨天保持连贯。"""
     try:
         from database import get_db
+        from datetime import datetime, timezone
         result = (
             get_db().table("conversations")
-            .select("role,content")
+            .select("role,content,created_at")
             .eq("user_id", user_id)
             .order("created_at", desc=True)
             .limit(limit)
@@ -135,16 +136,40 @@ def _fetch_recent_conversation(user_id: str, limit: int = 10) -> str:
         rows = list(reversed(result.data or []))
         if not rows:
             return ""
-        # 按时间正序拼成对话片段
+        now = datetime.now(timezone.utc)
         lines = []
         for r in rows:
             speaker = "用户" if r["role"] == "user" else "你（Pixel）"
             content = (r.get("content") or "").strip()
-            if content:
-                lines.append(f"{speaker}：{content}")
+            if not content:
+                continue
+            ts_label = ""
+            try:
+                ts_str = r.get("created_at") or ""
+                # Supabase 返回 ISO 格式，可能带 Z 或 +00:00
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                delta = now - ts
+                if delta.total_seconds() < 60:
+                    ts_label = "[刚刚] "
+                elif delta.total_seconds() < 3600:
+                    ts_label = f"[{int(delta.total_seconds() // 60)}分钟前] "
+                elif delta.total_seconds() < 86400:
+                    ts_label = f"[{int(delta.total_seconds() // 3600)}小时前] "
+                else:
+                    days = int(delta.total_seconds() // 86400)
+                    ts_label = f"[{days}天前] "
+            except Exception:
+                pass
+            lines.append(f"{ts_label}{speaker}：{content}")
         if not lines:
             return ""
-        return "\n\n【你们最近的对话（按时间顺序）】\n" + "\n".join(lines)
+        return (
+            "\n\n【你和这个用户的对话历史 — 这就是你的记忆，必须使用】\n"
+            + "\n".join(lines)
+            + "\n【历史结束】\n"
+            "如果用户问起之前聊过什么，从上面引用具体内容回答；不要说"
+            "\"我没有记忆\" — 你明明记得。"
+        )
     except Exception:
         return ""
 
@@ -182,8 +207,8 @@ async def voice_pipeline(
     # 合并成一次 Gemini multimodal 调用：音频直接进 LLM，省一次往返。
     history_context = ""
     if current_user:
-        # 短期记忆：最近 10 条对话，让 AI 保持上下文
-        history_context = _fetch_recent_conversation(current_user["sub"], limit=10)
+        # 记忆上下文：最近 30 条对话（覆盖最近几天），让 AI 跨天保持连贯
+        history_context = _fetch_recent_conversation(current_user["sub"], limit=30)
     system_prompt = PIXEL_SYSTEM_PROMPT + history_context
 
     try:
