@@ -11,6 +11,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+from rate_limit import limiter
 from routes import transcribe, chat, speak, summarize, translate, users, conversations, notes, memories, soul, ui, voice, devices, import_file
 
 app = FastAPI(
@@ -18,6 +22,10 @@ app = FastAPI(
     description="Pixel 挂脖式 AI 智能伙伴",
     version="1.0.0",
 )
+
+# 速率限制：挂到 app.state，供 @limiter.limit(...) 装饰器使用
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 开发环境允许 localhost，生产环境同域不需要 CORS 但保留兼容
 app.add_middleware(

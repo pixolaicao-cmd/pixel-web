@@ -47,8 +47,15 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
-# JWT
-JWT_SECRET            = os.getenv("JWT_SECRET", "pixel-ai-secret-change-me")
+# JWT — 启动时强制校验，缺失或使用默认值则直接报错退出
+JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
+if not JWT_SECRET or JWT_SECRET == "pixel-ai-secret-change-me":
+    raise RuntimeError(
+        "JWT_SECRET environment variable is required and must not be the default. "
+        "Generate one with: python -c 'import secrets; print(secrets.token_urlsafe(64))'"
+    )
+if len(JWT_SECRET) < 32:
+    raise RuntimeError("JWT_SECRET must be at least 32 characters long.")
 JWT_ALGORITHM         = "HS256"
 JWT_EXPIRE_HOURS      = 72    # 默认：72小时（不勾选"记住我"时）
 JWT_EXPIRE_HOURS_LONG = 168   # 记住我：7天
@@ -78,7 +85,8 @@ PIXEL_SYSTEM_PROMPT = """你是 Pixel，一个挂脖式 AI 智能伙伴。
 - 说话简洁自然，不要太正式
 - 支持中文、挪威语和英文，根据用户语言自动切换
 - 回复尽量简短（要转成语音播报），一般不超过3句话
-- 不要承诺自动保存对话或创建笔记——用户需要手动保存
+- 你的所有对话都会被自动保存，用户随时能在网页里查看历史
+- 如果上下文里给了你最近的对话历史，请利用它保持对话连贯（记得你们刚说过什么）
 
 能力：日常对话、录音转文字、笔记整理、翻译（中文/挪威语/英文）、提醒备忘"""
 

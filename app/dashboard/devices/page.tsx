@@ -60,7 +60,7 @@ export default function DevicesPage() {
         <div>
           <h1 className="text-2xl font-bold">Devices</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Your paired Pixel hardware. Each device links to your account via a 6-digit pairing code.
+            Your paired Pixel hardware. Each device links to your account via an 8-character pairing code.
           </p>
         </div>
         <button
@@ -84,12 +84,12 @@ export default function DevicesPage() {
           <p className="text-4xl">📡</p>
           <p className="mt-3 font-semibold">No devices paired yet</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Power on your Pixel device and enter the 6-digit code shown on its screen.
+            Power on your Pixel device and enter the 8-character code shown on its screen.
           </p>
           <div className="mt-6 rounded-lg bg-muted p-4 text-left text-xs text-muted-foreground">
             <p className="font-medium text-foreground mb-1">How pairing works:</p>
             <ol className="list-decimal list-inside space-y-1">
-              <li>Power on Pixel — it connects to WiFi and shows a 6-digit code</li>
+              <li>Power on Pixel — it connects to WiFi and shows an 8-character code</li>
               <li>Open this page and click <strong>Pair new device</strong> (coming soon)</li>
               <li>Enter the code — device is linked to your account</li>
               <li>Pixel stores the permanent token and works without re-pairing</li>

@@ -13,3 +13,4 @@ deepgram-sdk==4.0.0
 aiofiles==23.2.1
 python-docx==1.1.2
 markitdown[pdf,docx,pptx,xlsx]==0.1.1
+slowapi==0.1.9

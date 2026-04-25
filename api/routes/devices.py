@@ -9,17 +9,21 @@
 
 import os
 import secrets
-import string
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from database import get_db
 from user_auth import get_current_user
 from auth import verify_token
+from rate_limit import limiter
 
 router = APIRouter()
 
 PAIRING_TTL_MINUTES = 10  # 配对码有效期
+# 配对码字符集：8 位大写字母+数字，排除易混淆字符（0/O/1/I/L）
+# 31 字符 ^ 8 ≈ 8.5×10^11 种，在 10 分钟窗口内实际不可爆破
+PAIRING_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+PAIRING_CODE_LENGTH = 8
 
 
 # ── 数据模型 ──────────────────────────────────────────────
@@ -32,14 +36,19 @@ class RegisterRequest(BaseModel):
 
 
 class PairRequest(BaseModel):
-    pairing_code: str = Field(..., min_length=6, max_length=6)
+    pairing_code: str = Field(..., min_length=PAIRING_CODE_LENGTH, max_length=PAIRING_CODE_LENGTH)
 
 
 # ── 辅助函数 ──────────────────────────────────────────────
 
 def _gen_pairing_code() -> str:
-    """生成 6 位数字配对码。"""
-    return "".join(secrets.choice(string.digits) for _ in range(6))
+    """生成 8 位大写字母+数字配对码（排除 0/O/1/I/L 避免混淆）。"""
+    return "".join(secrets.choice(PAIRING_CODE_CHARS) for _ in range(PAIRING_CODE_LENGTH))
+
+
+def _clean_pairing_input(code: str) -> str:
+    """标准化用户输入：大写、去空格/连字符。字符集已排除易混淆字符，无需额外纠正。"""
+    return code.upper().replace(" ", "").replace("-", "")
 
 
 def _gen_device_token() -> str:
@@ -103,15 +112,25 @@ async def register_device(req: RegisterRequest, _: None = Depends(verify_token))
 
 
 @router.post("/devices/pair")
-async def pair_device(req: PairRequest, current_user: dict = Depends(get_current_user)):
+@limiter.limit("10/minute;100/hour")
+async def pair_device(
+    request: Request,
+    req: PairRequest,
+    current_user: dict = Depends(get_current_user),
+):
     """
-    用户在 App 输入 6 位配对码，将设备绑定到当前账号。
+    用户在 App 输入 8 位配对码，将设备绑定到当前账号。
     成功后生成永久 device_token。
     """
     db = get_db()
     now = datetime.now(timezone.utc)
 
-    result = db.table("devices").select("*").eq("pairing_code", req.pairing_code).execute()
+    # 标准化输入（大写、去空格/连字符），避免用户复制粘贴时的格式问题
+    code = _clean_pairing_input(req.pairing_code)
+    if len(code) != PAIRING_CODE_LENGTH:
+        raise HTTPException(status_code=400, detail="Invalid pairing code format")
+
+    result = db.table("devices").select("*").eq("pairing_code", code).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Invalid pairing code")
 

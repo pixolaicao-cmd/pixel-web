@@ -31,11 +31,12 @@ async def transcribe_audio(
     if not deepgram_api_key:
         raise HTTPException(status_code=500, detail="DEEPGRAM_API_KEY not configured")
 
-    content_type = file.content_type or "application/octet-stream"
+    raw_content_type = file.content_type or "application/octet-stream"
+    content_type = raw_content_type.split(";")[0].strip().lower()
     if content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported audio format: {content_type}",
+            detail=f"Unsupported audio format: {raw_content_type}",
         )
 
     audio_data = await file.read()

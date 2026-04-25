@@ -31,6 +31,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { href: "/dashboard/memory", label: tr.memory, icon: "🧠" },
     { href: "/dashboard/notes", label: tr.notes, icon: "📝" },
     { href: "/dashboard/devices", label: tr.devices, icon: "📡" },
+    { href: "/dashboard/pixel-test", label: "Pixel 模拟器", icon: "🎤" },
     { href: "/dashboard/settings", label: tr.settings, icon: "⚙️" },
   ];
 

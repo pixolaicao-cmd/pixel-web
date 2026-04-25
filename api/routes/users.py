@@ -5,11 +5,12 @@
 import urllib.parse
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, EmailStr
 from database import get_db
 from user_auth import hash_password, verify_password, create_token, get_current_user
+from rate_limit import limiter
 from config import (
     GOOGLE_OAUTH_CLIENT_ID,
     GOOGLE_OAUTH_CLIENT_SECRET,
@@ -44,7 +45,8 @@ class AuthResponse(BaseModel):
 # ── 邮箱注册 ────────────────────────────────────────────────
 
 @router.post("/register", response_model=AuthResponse)
-async def register(req: RegisterRequest):
+@limiter.limit("3/minute;20/hour")
+async def register(request: Request, req: RegisterRequest):
     db = get_db()
 
     existing = db.table("users").select("id").eq("email", req.email).execute()
@@ -73,7 +75,8 @@ async def register(req: RegisterRequest):
 # ── 邮箱登录 ────────────────────────────────────────────────
 
 @router.post("/login", response_model=AuthResponse)
-async def login(req: LoginRequest):
+@limiter.limit("5/minute;50/hour")
+async def login(request: Request, req: LoginRequest):
     db = get_db()
 
     result = db.table("users").select("*").eq("email", req.email).execute()
@@ -102,7 +105,8 @@ def _google_configured() -> bool:
 
 
 @router.get("/google/authorize")
-async def google_authorize():
+@limiter.limit("10/minute")
+async def google_authorize(request: Request):
     """把用户重定向到 Google 授权页面。"""
     if not _google_configured():
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
