@@ -42,6 +42,12 @@ type Exchange = {
 
 type MicState = "idle" | "requesting" | "recording" | "processing" | "error";
 
+// VAD（自动停止录音）参数
+const VAD_SPEECH_THRESHOLD = 0.08;   // 高于这个 RMS 算"在说话"
+const VAD_SILENCE_THRESHOLD = 0.04;  // 低于这个算"静音"
+const VAD_SILENCE_MS = 1500;         // 静音持续这么久就自动停（1.5s）
+const VAD_MIN_RECORD_MS = 800;       // 录音至少这么久才考虑自动停（防止刚开口就被截）
+
 export default function PixelTestPage() {
   const [micState, setMicState] = useState<MicState>("idle");
   const [error, setError] = useState<string>("");
@@ -50,6 +56,8 @@ export default function PixelTestPage() {
   const [peakLevel, setPeakLevel] = useState(0); // 本次录音的峰值
   const [liveBytes, setLiveBytes] = useState(0); // 录音中累积字节数
   const [lastRecording, setLastRecording] = useState<{ url: string; bytes: number; ms: number } | null>(null);
+  const [vadEnabled, setVadEnabled] = useState(true);
+  const [vadStatus, setVadStatus] = useState<string>(""); // 显示 VAD 状态："等你说话…" / "倒计时…"
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -59,6 +67,11 @@ export default function PixelTestPage() {
   const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const exchangeIdRef = useRef(0);
+  // VAD refs
+  const speechSeenRef = useRef(false);          // 本次录音里是否已经听到过语音
+  const lastVoiceAtRef = useRef<number>(0);     // 最后一次"在说话"的时间戳（performance.now()）
+  const vadEnabledRef = useRef(true);           // 把 state 同步到 ref，让动画帧循环能拿到最新值
+  const autoStoppedRef = useRef(false);         // 防止 VAD 重复触发 stop
 
   useEffect(() => {
     // 加载历史对话（切页面/刷新都不会丢）
@@ -142,9 +155,15 @@ export default function PixelTestPage() {
     }
   }
 
+  // 同步 vadEnabled state → ref（动画帧闭包用 ref 才拿得到最新值）
+  useEffect(() => {
+    vadEnabledRef.current = vadEnabled;
+  }, [vadEnabled]);
+
   function resetLevel() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setLevel(0);
+    setVadStatus("");
   }
 
   function runLevelMeter(analyser: AnalyserNode) {
@@ -161,6 +180,34 @@ export default function PixelTestPage() {
       const norm = Math.min(1, rms * 3); // 放大显示
       setLevel(norm);
       setPeakLevel((p) => (norm > p ? norm : p));
+
+      // ── VAD：检测说话 / 静音并自动停止 ─────────────
+      if (vadEnabledRef.current && !autoStoppedRef.current) {
+        const now = performance.now();
+        const elapsedSinceStart = now - recordStartRef.current;
+
+        if (norm > VAD_SPEECH_THRESHOLD) {
+          // 在说话：刷新最后语音时间，标记本次确实有人说过话
+          speechSeenRef.current = true;
+          lastVoiceAtRef.current = now;
+          setVadStatus("听到了");
+        } else if (norm < VAD_SILENCE_THRESHOLD && speechSeenRef.current) {
+          // 静音中：算一下离上次说话过了多久
+          const silentFor = now - lastVoiceAtRef.current;
+          const remaining = Math.max(0, VAD_SILENCE_MS - silentFor);
+          if (elapsedSinceStart >= VAD_MIN_RECORD_MS && silentFor >= VAD_SILENCE_MS) {
+            // 触发自动停止
+            autoStoppedRef.current = true;
+            setVadStatus("自动结束");
+            stopRecording();
+          } else {
+            setVadStatus(`静音 ${(remaining / 1000).toFixed(1)}s…`);
+          }
+        } else if (!speechSeenRef.current) {
+          setVadStatus("等你说话…");
+        }
+      }
+
       rafRef.current = requestAnimationFrame(tick);
     };
     tick();
@@ -220,6 +267,11 @@ export default function PixelTestPage() {
       recordStartRef.current = performance.now();
       setPeakLevel(0);
       setLiveBytes(0);
+      // 重置 VAD 状态
+      speechSeenRef.current = false;
+      lastVoiceAtRef.current = performance.now();
+      autoStoppedRef.current = false;
+      setVadStatus(vadEnabled ? "等你说话…" : "");
       // timeslice = 500ms：每 500ms 触发一次 ondataavailable，让我们能看到字节数实时增长
       rec.start(500);
       setMicState("recording");
@@ -350,7 +402,7 @@ export default function PixelTestPage() {
           />
           <div className="flex-1">
             <div className="flex items-baseline justify-between">
-              <StatusLine state={micState} />
+              <StatusLine state={micState} vadStatus={vadStatus} />
               {micState === "recording" && (
                 <span className="font-mono text-xs text-muted-foreground">
                   {(liveBytes / 1024).toFixed(1)} KB
@@ -359,6 +411,23 @@ export default function PixelTestPage() {
             </div>
             <LevelMeter level={level} active={micState === "recording"} />
           </div>
+        </div>
+
+        {/* VAD 开关 */}
+        <div className="mt-4 flex items-center justify-between rounded-lg bg-muted/30 px-4 py-2 text-xs">
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={vadEnabled}
+              onChange={(e) => setVadEnabled(e.target.checked)}
+              disabled={micState === "recording"}
+              className="h-3.5 w-3.5"
+            />
+            <span>自动停止（静音 {(VAD_SILENCE_MS / 1000).toFixed(1)}s 自动结束 + 上传）</span>
+          </label>
+          <span className="text-muted-foreground">
+            {vadEnabled ? "开" : "关 — 需手动点麦克风结束"}
+          </span>
         </div>
 
         {error && (
@@ -452,15 +521,22 @@ function RecordButton({
   );
 }
 
-function StatusLine({ state }: { state: MicState }) {
+function StatusLine({ state, vadStatus }: { state: MicState; vadStatus?: string }) {
   const map: Record<MicState, string> = {
     idle: "准备就绪 — 点击麦克风开始",
     requesting: "请求麦克风权限…",
-    recording: "录音中… 再点一次结束",
+    recording: "录音中…",
     processing: "处理中（STT → AI → TTS）…",
     error: "出错了",
   };
-  return <p className="text-sm font-medium">{map[state]}</p>;
+  return (
+    <p className="text-sm font-medium">
+      {map[state]}
+      {state === "recording" && vadStatus && (
+        <span className="ml-2 text-xs font-normal text-muted-foreground">· {vadStatus}</span>
+      )}
+    </p>
+  );
 }
 
 function LevelMeter({ level, active }: { level: number; active: boolean }) {
