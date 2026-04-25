@@ -8,6 +8,7 @@ POST /voice — 设备主循环接口
 
 import os
 import io
+import re
 import json
 import base64
 import httpx
@@ -87,7 +88,8 @@ async def _gemini_voice_call(
         }],
         "generationConfig": {
             "responseMimeType": "application/json",
-            "maxOutputTokens": 1024,
+            # 中文 token 占用大、历史上下文长时容易把预算打满。给充足额度。
+            "maxOutputTokens": 2048,
             "temperature": 0.7,
         },
     }
@@ -101,14 +103,45 @@ async def _gemini_voice_call(
         raise RuntimeError(f"Gemini HTTP {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
     try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        candidate = data["candidates"][0]
+        text = candidate["content"]["parts"][0]["text"]
     except (KeyError, IndexError):
         raise RuntimeError(f"Gemini unexpected response: {json.dumps(data)[:300]}")
+    finish_reason = candidate.get("finishReason", "")
     try:
-        parsed = json.loads(text)
+        return json.loads(text)
     except json.JSONDecodeError:
-        raise RuntimeError(f"Gemini non-JSON output: {text[:300]}")
-    return parsed
+        # 降级抢救：从被截断的 JSON 里 regex 抠 transcript/reply/language
+        salvaged = _salvage_json(text)
+        if salvaged.get("transcript") or salvaged.get("reply"):
+            # 至少抠到一点东西就用，不要让用户白等
+            return salvaged
+        # 实在不行：把 finishReason 报清楚（MAX_TOKENS / SAFETY / RECITATION）
+        hint = ""
+        if finish_reason == "MAX_TOKENS":
+            hint = " (输出超长被截断 — 历史上下文太多或回复太长)"
+        elif finish_reason == "SAFETY":
+            hint = " (内容被安全过滤拦截)"
+        elif finish_reason:
+            hint = f" (finishReason={finish_reason})"
+        raise RuntimeError(f"Gemini non-JSON output{hint}: {text[:300]}")
+
+
+def _salvage_json(text: str) -> dict:
+    """从被截断/损坏的 JSON 里用正则抢救字段，不抛异常。"""
+    out: dict = {}
+    # 匹配 "key": "value..." — value 里允许转义引号 \" 但被截断时也容忍到字符串末尾
+    for key in ("transcript", "language", "reply"):
+        # 优先：完整闭合的字符串
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            out[key] = m.group(1).encode().decode("unicode_escape", errors="replace")
+            continue
+        # 降级：未闭合（被截断），抓到末尾
+        m = re.search(rf'"{key}"\s*:\s*"([^"]*)$', text)
+        if m:
+            out[key] = m.group(1)
+    return out
 
 
 def _fetch_memories(user_id: str, query: str, limit: int = 5) -> str:
