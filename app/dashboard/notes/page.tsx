@@ -258,6 +258,10 @@ export default function NotesPage() {
           {formError && (
             <p className="text-xs text-red-500">Something went wrong. Try again.</p>
           )}
+          <p className="text-xs text-muted-foreground">
+            🎙️ 录音转写支持中文/英文/挪威语自动检测。当前版本单段录音建议 ≤ 9 分钟（≤ 20MB）。
+            长会议/课堂转写正在开发中。
+          </p>
         </div>
       )}
 
