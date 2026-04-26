@@ -22,6 +22,14 @@ function getToken(): string | null {
   return localStorage.getItem("pixel_token") ?? sessionStorage.getItem("pixel_token");
 }
 
+type ServerTiming = {
+  setup_ms?: number;
+  gemini_ms?: number;
+  tts_ms?: number;
+  db_ms?: number;
+  total_ms?: number;
+};
+
 type Exchange = {
   id: number;
   transcript: string;
@@ -38,6 +46,9 @@ type Exchange = {
   createdAt?: string;
   saved?: boolean;
   historyBytes?: number;
+  soulUsed?: boolean;
+  voice?: string;
+  serverTiming?: ServerTiming;
 };
 
 type MicState = "idle" | "requesting" | "recording" | "processing" | "error";
@@ -347,7 +358,14 @@ export default function PixelTestPage() {
       const language      = res.headers.get("X-Language") ?? "";
       const saved         = res.headers.get("X-Saved") === "1";
       const historyUsed   = parseInt(res.headers.get("X-History-Used") ?? "0", 10);
-      console.log(`[voice] saved=${saved} historyBytes=${historyUsed}`);
+      const soulUsed      = res.headers.get("X-Soul-Used") === "1";
+      const voiceUsed     = res.headers.get("X-Voice") ?? "";
+      let serverTiming: ServerTiming | undefined;
+      try {
+        const raw = res.headers.get("X-Timing");
+        if (raw) serverTiming = JSON.parse(raw);
+      } catch { /* ignore */ }
+      console.log(`[voice] saved=${saved} hist=${historyUsed} soul=${soulUsed} voice=${voiceUsed} timing=`, serverTiming);
 
       const audioBlob = await res.blob();
       const uploadMs  = performance.now() - tStart;
@@ -367,6 +385,9 @@ export default function PixelTestPage() {
         bytes:    audioBlob.size,
         saved,
         historyBytes: historyUsed,
+        soulUsed,
+        voice: voiceUsed,
+        serverTiming,
       };
       setExchanges((prev) => [exchange, ...prev]);
 
@@ -389,6 +410,10 @@ export default function PixelTestPage() {
         <p className="mt-1 text-sm text-muted-foreground">
           用浏览器麦克风模拟挂件，调用和真机完全一致的 <code className="rounded bg-muted px-1 text-xs">/api/voice</code>。
           验证端到端延迟、STT 准确度、AI 回复质量、TTS 自然度。
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          💡 这里的对话**自动保存到「记忆区 → 对话记录」**（不是 Notater）。
+          Notater 是独立的笔记功能，需要去 Notater 页面用录音按钮单独录制。
         </p>
       </div>
 
@@ -611,12 +636,31 @@ function ExchangeCard({ ex }: { ex: Exchange }) {
             <Stat label="总耗时" value={fmt(ex.totalMs!)} emphasize />
             <Stat label="MP3" value={kb(ex.bytes!)} />
           </div>
-          <div className="mt-2 flex gap-3 text-[11px] text-muted-foreground">
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
             <span className={ex.saved ? "text-green-600" : "text-destructive"}>
               {ex.saved ? "✓ 已保存到历史" : "✗ 保存失败"}
             </span>
-            <span>历史上下文：{ex.historyBytes ?? 0} 字节</span>
+            <span>历史：{ex.historyBytes ?? 0}B</span>
+            <span className={ex.soulUsed ? "text-green-600" : ""}>
+              {ex.soulUsed ? "✓ Soul 生效" : "Soul 未读到"}
+            </span>
+            {ex.voice && <span title="实际使用的 TTS 声音">🔊 {ex.voice.split("-").slice(-1)[0].replace("Neural", "")}</span>}
           </div>
+          {ex.serverTiming && (
+            <div className="mt-2 rounded bg-muted/40 p-2 text-[11px] text-muted-foreground">
+              <div className="mb-1 font-medium">后端分段（毫秒）</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 sm:grid-cols-4">
+                <span>setup: <span className="font-mono">{ex.serverTiming.setup_ms ?? "?"}</span></span>
+                <span className={(ex.serverTiming.gemini_ms ?? 0) > 3000 ? "text-orange-600" : ""}>
+                  gemini: <span className="font-mono">{ex.serverTiming.gemini_ms ?? "?"}</span>
+                </span>
+                <span className={(ex.serverTiming.tts_ms ?? 0) > 2000 ? "text-orange-600" : ""}>
+                  tts: <span className="font-mono">{ex.serverTiming.tts_ms ?? "?"}</span>
+                </span>
+                <span>db: <span className="font-mono">{ex.serverTiming.db_ms ?? "?"}</span></span>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

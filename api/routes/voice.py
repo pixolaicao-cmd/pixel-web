@@ -10,6 +10,7 @@ import os
 import io
 import re
 import json
+import time
 import base64
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
@@ -30,11 +31,41 @@ ALLOWED_AUDIO = {
     "application/octet-stream",
 }
 
-VOICE_MAP = {
-    "zh": "zh-CN-XiaoxiaoNeural",
-    "no": "nb-NO-PernilleNeural",
-    "en": "en-US-JennyNeural",
+# 语音库：(语言, 风格) → edge-tts voice 名
+# 风格映射来自 Soul 设置的 voice_style：warm | energetic | calm | serious
+VOICE_MAP_BY_STYLE = {
+    "zh": {
+        "warm":      "zh-CN-XiaoxiaoNeural",   # 温暖
+        "energetic": "zh-CN-XiaoyiNeural",     # 活泼
+        "calm":      "zh-CN-XiaomengNeural",   # 平静
+        "serious":   "zh-CN-YunjianNeural",    # 严肃（男声）
+    },
+    "no": {
+        "warm":      "nb-NO-PernilleNeural",
+        "energetic": "nb-NO-IselinNeural",
+        "calm":      "nb-NO-PernilleNeural",
+        "serious":   "nb-NO-FinnNeural",
+    },
+    "en": {
+        "warm":      "en-US-JennyNeural",
+        "energetic": "en-US-AriaNeural",
+        "calm":      "en-US-MichelleNeural",
+        "serious":   "en-US-GuyNeural",
+    },
 }
+
+# 后向兼容（如有别处 import VOICE_MAP）
+VOICE_MAP = {lang: voices["warm"] for lang, voices in VOICE_MAP_BY_STYLE.items()}
+
+# 人格 → 中文描述（注入 prompt）
+PERSONALITY_DESC = {
+    "friendly":     "友好温暖、像贴心朋友",
+    "professional": "专业稳重、用词准确简练",
+    "playful":      "俏皮活泼、轻松幽默",
+    "calm":         "平和温柔、慢条斯理",
+}
+
+LANG_NAME = {"zh": "中文", "en": "英文", "no": "挪威语", "auto": "自动检测"}
 
 GEMINI_MODEL = os.getenv("GEMINI_VOICE_MODEL", "gemini-2.5-flash")
 GEMINI_URL = (
@@ -163,6 +194,58 @@ def _fetch_memories(user_id: str, query: str, limit: int = 5) -> str:
         return ""
 
 
+def _fetch_soul(user_id: str) -> dict:
+    """读取用户 Soul 设置；失败返回默认值，不抛异常。"""
+    defaults = {
+        "pixel_name": "Pixel",
+        "personality": "friendly",
+        "language": "auto",
+        "voice_style": "warm",
+        "custom_prompt": "",
+    }
+    try:
+        from database import get_db
+        result = (
+            get_db().table("soul_settings")
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if result.data:
+            row = result.data[0]
+            return {k: (row.get(k) or v) for k, v in defaults.items()}
+    except Exception:
+        pass
+    return defaults
+
+
+def _build_soul_prompt(soul: dict) -> str:
+    """把 Soul 设置拼成注入 system prompt 的人格段。"""
+    name = (soul.get("pixel_name") or "Pixel").strip()
+    personality = soul.get("personality") or "friendly"
+    voice_style = soul.get("voice_style") or "warm"
+    language = soul.get("language") or "auto"
+    custom = (soul.get("custom_prompt") or "").strip()
+
+    lines = [f"\n\n【你的身份和风格】", f"- 你的名字叫 {name}（用户给你起的）"]
+    if personality in PERSONALITY_DESC:
+        lines.append(f"- 性格风格：{PERSONALITY_DESC[personality]}")
+    # voice_style 主要影响 TTS，但也告诉 AI 让回复语气匹配
+    style_hint = {
+        "warm": "语气温暖，像在面对面聊天",
+        "energetic": "语气活泼有活力，多一点感叹",
+        "calm": "语气平静舒缓",
+        "serious": "语气稳重正式",
+    }.get(voice_style)
+    if style_hint:
+        lines.append(f"- 说话语气：{style_hint}")
+    if language != "auto":
+        lines.append(f"- 用户偏好用 {LANG_NAME.get(language, language)} 交流（除非用户明确切换语言，否则尽量用这个语言）")
+    if custom:
+        lines.append(f"- 用户对你的特别要求：{custom}")
+    return "\n".join(lines)
+
+
 def _fetch_recent_conversation(user_id: str, limit: int = 30) -> str:
     """拉最近 N 条对话作为记忆上下文，让 AI 跨天保持连贯。"""
     try:
@@ -246,14 +329,26 @@ async def voice_pipeline(
         raise HTTPException(status_code=400, detail="File too large (max 25MB)")
 
     # ── 1+2. Gemini 2.5 Flash 一站式：STT + 对话回复 ─────────
-    # 之前两步（Deepgram → Gemma 31B）总耗时 24s 且中文识别错误。
-    # 合并成一次 Gemini multimodal 调用：音频直接进 LLM，省一次往返。
+    # 分段计时：能在 response header 里告诉前端 setup/Gemini/TTS/DB 各占多久
+    timings: dict[str, int] = {}
+    t0 = time.perf_counter()
+
     history_context = ""
+    soul_prompt = ""
+    soul_voice_style = "warm"
+    soul_lang_pref = "auto"
     if current_user:
         # 记忆上下文：最近 30 条对话（覆盖最近几天），让 AI 跨天保持连贯
         history_context = _fetch_recent_conversation(current_user["sub"], limit=30)
-    system_prompt = PIXEL_SYSTEM_PROMPT + history_context
+        # Soul 设置：人格 + 自定义指令 + 偏好语言 + 声音风格
+        soul = _fetch_soul(current_user["sub"])
+        soul_prompt = _build_soul_prompt(soul)
+        soul_voice_style = soul.get("voice_style") or "warm"
+        soul_lang_pref = soul.get("language") or "auto"
+    system_prompt = PIXEL_SYSTEM_PROMPT + soul_prompt + history_context
+    timings["setup_ms"] = int((time.perf_counter() - t0) * 1000)
 
+    t1 = time.perf_counter()
     try:
         result = await _gemini_voice_call(
             audio_bytes=audio_data,
@@ -262,6 +357,7 @@ async def voice_pipeline(
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI error: {e}")
+    timings["gemini_ms"] = int((time.perf_counter() - t1) * 1000)
 
     transcript = (result.get("transcript") or "").strip()
     reply_text = (result.get("reply") or "").strip()
@@ -276,6 +372,7 @@ async def voice_pipeline(
         raise HTTPException(status_code=502, detail="AI returned empty reply")
 
     # ── 3. TTS (edge-tts) ────────────────────────────────
+    t2 = time.perf_counter()
     lang_code = "zh"
     if detected_lang.startswith("zh"):
         lang_code = "zh"
@@ -284,7 +381,9 @@ async def voice_pipeline(
     elif detected_lang.startswith("en"):
         lang_code = "en"
 
-    voice = VOICE_MAP.get(lang_code, VOICE_MAP["zh"])
+    # 用 Soul 的 voice_style 选 voice，没匹配上回退到 warm
+    voices_for_lang = VOICE_MAP_BY_STYLE.get(lang_code, VOICE_MAP_BY_STYLE["zh"])
+    voice = voices_for_lang.get(soul_voice_style) or voices_for_lang["warm"]
     try:
         communicate = edge_tts.Communicate(reply_text, voice)
         audio_buffer = io.BytesIO()
@@ -296,10 +395,12 @@ async def voice_pipeline(
             raise ValueError("Empty TTS output")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"TTS error: {e}")
+    timings["tts_ms"] = int((time.perf_counter() - t2) * 1000)
 
     # ── 4. 同步保存对话 ──────────────────────────────────
     # 不能用 asyncio.create_task —— Vercel serverless 在 response 发出后
     # 立刻冻结函数实例，后台 task 会被丢弃。必须 await 完成再返回。
+    t3 = time.perf_counter()
     saved_ok = False
     if current_user:
         try:
@@ -312,6 +413,8 @@ async def voice_pipeline(
         except Exception as e:
             # 不阻塞用户体验，但要让前端知道
             print(f"[voice] save conversation failed: {e}")
+    timings["db_ms"] = int((time.perf_counter() - t3) * 1000)
+    timings["total_ms"] = int((time.perf_counter() - t0) * 1000)
 
     # 文字编码成 ASCII-safe header（去掉非 Latin-1 字符用 URL encoding）
     from urllib.parse import quote
@@ -324,6 +427,10 @@ async def voice_pipeline(
             "X-Language":     detected_lang or "zh",
             "X-Saved":        "1" if saved_ok else "0",
             "X-History-Used": str(len(history_context)),
+            "X-Soul-Used":    "1" if soul_prompt else "0",
+            "X-Voice":        voice,
+            # 后端分段计时（毫秒），前端能看到瓶颈在哪一段
+            "X-Timing":       json.dumps(timings),
             "Content-Disposition": "inline; filename=pixel_reply.mp3",
         },
     )
