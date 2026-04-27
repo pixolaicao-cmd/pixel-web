@@ -87,14 +87,15 @@ async def _gemini_voice_call(
     audio_mime: str,
     system_prompt: str,
 ) -> dict:
-    """一次调用：音频 → {transcript, language, reply}"""
+    """一次调用：音频 → {transcript, language, reply, new_memories}"""
     audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
     instructions = (
-        "用户刚刚发送了一段语音。请你完成两件事，并以 JSON 格式输出：\n"
+        "用户刚刚发送了一段语音。请你完成三件事，并以 JSON 格式输出：\n"
         '{\n'
-        '  "transcript": "<用户原话的精确转写，保留原始语言>",\n'
-        '  "language":   "<zh / en / no 三选一 — 注意：这里填的是【你 reply 的语言】，因为它决定 TTS 用什么声音>",\n'
-        '  "reply":      "<你的口语化回复，不超过3句话>"\n'
+        '  "transcript":   "<用户原话的精确转写，保留原始语言>",\n'
+        '  "language":     "<zh / en / no 三选一 — 注意：这里填的是【你 reply 的语言】，因为它决定 TTS 用什么声音>",\n'
+        '  "reply":        "<你的口语化回复，不超过3句话>",\n'
+        '  "new_memories": [{"content": "<事实>", "category": "<分类>"}]\n'
         '}\n'
         "\n"
         "【回复语言规则 — 重要】\n"
@@ -105,6 +106,33 @@ async def _gemini_voice_call(
         "   例：用户用挪威语说\"翻译成中文：早上好\" → reply: \"早上好\"，language: \"zh\"\n"
         "   例：用户用中文说\"用英文怎么说我饿了\" → reply: \"I'm hungry.\"，language: \"en\"\n"
         "3. 如果回复混合多种语言，language 填占主导地位的那个。\n"
+        "\n"
+        "【new_memories — 自动学习用户的核心机制 ★★★ 重要】\n"
+        "你必须从用户这次说的话里，主动识别出值得【长期记住】的事实，写进 new_memories。\n"
+        "这是 Pixel 「越用越懂你」的灵魂，不要遗漏。\n"
+        "\n"
+        "✅ **要记**（用户的稳定属性 / 长期偏好 / 重要关系 / 重要事件）：\n"
+        "  - 个人事实：'我叫XX'、'我30岁'、'我住在挪威'、'我是程序员'\n"
+        "  - 偏好：'我喜欢拿铁'、'我不吃香菜'、'我睡前喜欢听播客'\n"
+        "  - 关系：'我家猫叫橘子'、'我女朋友叫小美'、'我妈下周来看我'\n"
+        "  - 目标/计划：'我下个月要去日本'、'我在备考雅思'、'我想学吉他'\n"
+        "  - 习惯：'我每天早上跑步'、'周二我健身'\n"
+        "\n"
+        "❌ **不要记**（瞬时状态 / 当下感受 / 闲聊 / 你已经知道的）：\n"
+        "  - 当下状态：'我现在好累'、'我饿了'、'今天好热'\n"
+        "  - 系统/翻译指令：'打开翻译模式'、'用中文说X'\n"
+        "  - 你已经记得的事（看上面【关于这个用户你长期记得的事】列表，重复的不要重复存）\n"
+        "  - 不确定的猜测、客套话、问候\n"
+        "\n"
+        "category 用以下之一：identity（身份）/ preference（偏好）/ relationship（关系）"
+        "/ goal（目标）/ habit（习惯）/ event（事件）/ general\n"
+        "\n"
+        "content 用第一人称、简洁的中文写（不管用户用什么语言说的）。\n"
+        "  例：用户说'I love oat milk lattes' → content: '喜欢燕麦拿铁'\n"
+        "  例：用户说'我猫叫橘子，3岁了' → content: '养了一只猫，名字叫橘子，3岁'\n"
+        "\n"
+        "数量：每次最多 3 条，宁缺毋滥。如果这次用户没说什么值得记的，"
+        "new_memories 就给空数组 []。\n"
         "\n"
         "只输出 JSON，不要任何其他内容、不要 markdown 代码块、不要思考过程。"
     )
@@ -119,8 +147,8 @@ async def _gemini_voice_call(
         }],
         "generationConfig": {
             "responseMimeType": "application/json",
-            # 中文 token 占用大、历史上下文长时容易把预算打满。给充足额度。
-            "maxOutputTokens": 2048,
+            # 中文 token 占用大、历史上下文长 + 自动提取记忆 → 预算给充足
+            "maxOutputTokens": 3072,
             "temperature": 0.7,
         },
     }
@@ -190,6 +218,99 @@ def _fetch_memories(user_id: str, query: str, limit: int = 5) -> str:
             return ""
         lines = "\n".join(f"- {m['content']}" for m in memories)
         return f"\n\n【关于这个用户你记得的事情】\n{lines}"
+    except Exception:
+        return ""
+
+
+def _save_extracted_memories(user_id: str, raw_items: list) -> int:
+    """把 AI 自动提取出来的新记忆存进 memories 表。
+    返回实际入库的条数（去重 + 数据校验后）。
+    设计原则：
+      - 不调 sentence-transformers（太慢，跳过 embedding，留空让以后回填）
+      - 简单字符串去重：和已有记忆 content 完全相同就跳过（防止同一事实反复存）
+      - 校验 content 非空且 ≤ 500 字
+      - 任何异常吞掉，绝不阻断主流程
+    """
+    if not raw_items or not isinstance(raw_items, list):
+        return 0
+    valid_categories = {"identity", "preference", "relationship",
+                        "goal", "habit", "event", "general"}
+    try:
+        from database import get_db
+        db = get_db()
+        # 拉一次现有 content 做去重（最多 200 条避免巨慢）
+        existing = (
+            db.table("memories")
+            .select("content")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(200)
+            .execute()
+        )
+        existing_set = {(m.get("content") or "").strip() for m in (existing.data or [])}
+
+        rows = []
+        for item in raw_items[:3]:  # 硬上限 3 条/轮
+            if not isinstance(item, dict):
+                continue
+            content = (item.get("content") or "").strip()
+            category = (item.get("category") or "general").strip().lower()
+            if not content or len(content) > 500:
+                continue
+            if category not in valid_categories:
+                category = "general"
+            if content in existing_set:
+                continue
+            existing_set.add(content)  # 防止同一轮内 AI 重复输出
+            rows.append({
+                "user_id":  user_id,
+                "content":  content,
+                "category": category,
+            })
+        if not rows:
+            return 0
+        db.table("memories").insert(rows).execute()
+        return len(rows)
+    except Exception as e:
+        print(f"[voice] save extracted memories failed: {e}")
+        return 0
+
+
+def _fetch_recent_memories(user_id: str, limit: int = 20) -> str:
+    """按时间倒序拉最近的记忆，不做向量检索 — 速度快、覆盖全。
+    适合早期用户（记忆量 < 50 条），后期记忆变多再切到向量检索版本。
+    """
+    try:
+        from database import get_db
+        result = (
+            get_db().table("memories")
+            .select("content, category, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        items = result.data or []
+        if not items:
+            return ""
+        # 按 category 分组，让 AI 看得更清晰
+        grouped: dict[str, list[str]] = {}
+        for m in items:
+            cat = m.get("category") or "general"
+            grouped.setdefault(cat, []).append(m["content"])
+        lines = []
+        for cat, contents in grouped.items():
+            lines.append(f"[{cat}]")
+            for c in contents:
+                lines.append(f"  - {c}")
+        body = "\n".join(lines)
+        return (
+            "\n\n【关于这个用户你长期记得的事 — 这是你的「越用越懂」的核心】\n"
+            "回复时如果话题相关，自然地引用这些事实（"
+            "比如用户说「想喝点东西」而你记得 ta 喜欢拿铁，可以建议拿铁），"
+            "但不要硬拗，不要每句话都提。\n"
+            f"{body}"
+        )
     except Exception:
         return ""
 
@@ -334,18 +455,21 @@ async def voice_pipeline(
     t0 = time.perf_counter()
 
     history_context = ""
+    memories_context = ""
     soul_prompt = ""
     soul_voice_style = "warm"
     soul_lang_pref = "auto"
     if current_user:
-        # 记忆上下文：最近 30 条对话（覆盖最近几天），让 AI 跨天保持连贯
-        history_context = _fetch_recent_conversation(current_user["sub"], limit=30)
+        # 短期记忆：最近 20 条对话（覆盖最近几小时～一天），保持会话连贯
+        history_context = _fetch_recent_conversation(current_user["sub"], limit=20)
+        # 长期记忆：用户长期事实（喜好/关系/重要事件等），「越用越懂」的核心
+        memories_context = _fetch_recent_memories(current_user["sub"], limit=20)
         # Soul 设置：人格 + 自定义指令 + 偏好语言 + 声音风格
         soul = _fetch_soul(current_user["sub"])
         soul_prompt = _build_soul_prompt(soul)
         soul_voice_style = soul.get("voice_style") or "warm"
         soul_lang_pref = soul.get("language") or "auto"
-    system_prompt = PIXEL_SYSTEM_PROMPT + soul_prompt + history_context
+    system_prompt = PIXEL_SYSTEM_PROMPT + soul_prompt + memories_context + history_context
     timings["setup_ms"] = int((time.perf_counter() - t0) * 1000)
 
     t1 = time.perf_counter()
@@ -362,6 +486,7 @@ async def voice_pipeline(
     transcript = (result.get("transcript") or "").strip()
     reply_text = (result.get("reply") or "").strip()
     detected_lang = (result.get("language") or "zh").strip().lower()
+    extracted_memories = result.get("new_memories") or []
 
     if not transcript:
         raise HTTPException(
@@ -397,11 +522,12 @@ async def voice_pipeline(
         raise HTTPException(status_code=502, detail=f"TTS error: {e}")
     timings["tts_ms"] = int((time.perf_counter() - t2) * 1000)
 
-    # ── 4. 同步保存对话 ──────────────────────────────────
+    # ── 4. 同步保存对话 + 自动学习记忆 ────────────────────
     # 不能用 asyncio.create_task —— Vercel serverless 在 response 发出后
     # 立刻冻结函数实例，后台 task 会被丢弃。必须 await 完成再返回。
     t3 = time.perf_counter()
     saved_ok = False
+    new_memories_count = 0
     if current_user:
         try:
             from database import get_db
@@ -413,6 +539,11 @@ async def voice_pipeline(
         except Exception as e:
             # 不阻塞用户体验，但要让前端知道
             print(f"[voice] save conversation failed: {e}")
+        # 自动学习：把 AI 提取的新记忆存进 memories 表
+        # 失败不影响用户体验，最坏只是这次对话的事实没记住，下次还有机会
+        new_memories_count = _save_extracted_memories(
+            current_user["sub"], extracted_memories
+        )
     timings["db_ms"] = int((time.perf_counter() - t3) * 1000)
     timings["total_ms"] = int((time.perf_counter() - t0) * 1000)
 
@@ -426,8 +557,10 @@ async def voice_pipeline(
             "X-Reply":        quote(reply_text[:200]),
             "X-Language":     detected_lang or "zh",
             "X-Saved":        "1" if saved_ok else "0",
-            "X-History-Used": str(len(history_context)),
-            "X-Soul-Used":    "1" if soul_prompt else "0",
+            "X-History-Used":  str(len(history_context)),
+            "X-Memories-Used": str(len(memories_context)),
+            "X-Memories-New":  str(new_memories_count),
+            "X-Soul-Used":     "1" if soul_prompt else "0",
             "X-Voice":        voice,
             # 后端分段计时（毫秒），前端能看到瓶颈在哪一段
             "X-Timing":       json.dumps(timings),

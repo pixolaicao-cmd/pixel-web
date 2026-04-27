@@ -46,6 +46,8 @@ type Exchange = {
   createdAt?: string;
   saved?: boolean;
   historyBytes?: number;
+  memoriesBytes?: number;
+  memoriesNew?: number;
   soulUsed?: boolean;
   voice?: string;
   serverTiming?: ServerTiming;
@@ -358,6 +360,8 @@ export default function PixelTestPage() {
       const language      = res.headers.get("X-Language") ?? "";
       const saved         = res.headers.get("X-Saved") === "1";
       const historyUsed   = parseInt(res.headers.get("X-History-Used") ?? "0", 10);
+      const memoriesUsed  = parseInt(res.headers.get("X-Memories-Used") ?? "0", 10);
+      const memoriesNew   = parseInt(res.headers.get("X-Memories-New")  ?? "0", 10);
       const soulUsed      = res.headers.get("X-Soul-Used") === "1";
       const voiceUsed     = res.headers.get("X-Voice") ?? "";
       let serverTiming: ServerTiming | undefined;
@@ -385,6 +389,8 @@ export default function PixelTestPage() {
         bytes:    audioBlob.size,
         saved,
         historyBytes: historyUsed,
+        memoriesBytes: memoriesUsed,
+        memoriesNew,
         soulUsed,
         voice: voiceUsed,
         serverTiming,
@@ -414,6 +420,11 @@ export default function PixelTestPage() {
         <p className="mt-2 text-xs text-muted-foreground">
           💡 这里的对话**自动保存到「记忆区 → 对话记录」**（不是 Notater）。
           Notater 是独立的笔记功能，需要去 Notater 页面用录音按钮单独录制。
+        </p>
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          ✨ Pixel 会从对话中**自动学习关于你的事实**（喜好/关系/计划等），
+          下次它就记得了。卡片上的「✨ 新学到 N 条」就是它刚学到的。
+          可在 Minne 页面查看/管理。
         </p>
       </div>
 
@@ -641,6 +652,17 @@ function ExchangeCard({ ex }: { ex: Exchange }) {
               {ex.saved ? "✓ 已保存到历史" : "✗ 保存失败"}
             </span>
             <span>历史：{ex.historyBytes ?? 0}B</span>
+            <span className={(ex.memoriesBytes ?? 0) > 0 ? "text-green-600" : "text-muted-foreground"} title="长期记忆 (Minne) 字节数">
+              🧠 记忆：{ex.memoriesBytes ?? 0}B
+            </span>
+            {(ex.memoriesNew ?? 0) > 0 && (
+              <span
+                className="rounded-full bg-amber-500/20 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-400"
+                title="本次对话 Pixel 自动学到的新事实"
+              >
+                ✨ 新学到 {ex.memoriesNew} 条
+              </span>
+            )}
             <span className={ex.soulUsed ? "text-green-600" : ""}>
               {ex.soulUsed ? "✓ Soul 生效" : "Soul 未读到"}
             </span>
