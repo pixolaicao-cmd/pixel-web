@@ -286,6 +286,25 @@ export async function unlinkDevice(deviceId: string) {
   return res.json();
 }
 
+export async function pairDevice(pairingCode: string): Promise<{
+  status: string;
+  device_id: string;
+  model: string;
+  message: string;
+}> {
+  const res = await fetch(`${API_BASE}/devices/pair`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ pairing_code: pairingCode }),
+  });
+  if (!res.ok) {
+    let detail = "Pairing failed";
+    try { detail = (await res.json()).detail ?? detail; } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
 export interface Device {
   id: string;
   device_id: string;           // MAC address

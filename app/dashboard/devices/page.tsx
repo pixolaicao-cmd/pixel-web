@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getDevices, unlinkDevice, type Device } from "@/lib/api";
+import { getDevices, unlinkDevice, pairDevice, type Device } from "@/lib/api";
 
 function formatDate(iso: string | null) {
   if (!iso) return "—";
@@ -26,6 +26,13 @@ export default function DevicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [unlinking, setUnlinking] = useState<string | null>(null);
+
+  // Pair-new-device state
+  const [pairOpen, setPairOpen] = useState(false);
+  const [pairCode, setPairCode] = useState("");
+  const [pairing, setPairing] = useState(false);
+  const [pairError, setPairError] = useState("");
+  const [pairSuccess, setPairSuccess] = useState("");
 
   async function load() {
     try {
@@ -54,6 +61,31 @@ export default function DevicesPage() {
     }
   }
 
+  async function handlePair(e: React.FormEvent) {
+    e.preventDefault();
+    setPairError("");
+    setPairSuccess("");
+    const code = pairCode.trim().toUpperCase().replace(/[\s-]/g, "");
+    if (code.length !== 8) {
+      setPairError("Code must be exactly 8 characters.");
+      return;
+    }
+    setPairing(true);
+    try {
+      const res = await pairDevice(code);
+      setPairSuccess(res.message ?? "Device paired!");
+      setPairCode("");
+      // Reload list — device should now appear
+      await load();
+      // Auto-close form after 1.5s so user sees the success state
+      setTimeout(() => { setPairOpen(false); setPairSuccess(""); }, 1500);
+    } catch (err) {
+      setPairError(err instanceof Error ? err.message : "Pairing failed.");
+    } finally {
+      setPairing(false);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -63,13 +95,57 @@ export default function DevicesPage() {
             Your paired Pixel hardware. Each device links to your account via an 8-character pairing code.
           </p>
         </div>
-        <button
-          onClick={load}
-          className="rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"
-        >
-          Refresh
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setPairOpen((v) => !v); setPairError(""); setPairSuccess(""); }}
+            className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
+            {pairOpen ? "Cancel" : "+ Pair new device"}
+          </button>
+          <button
+            onClick={load}
+            className="rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {pairOpen && (
+        <form
+          onSubmit={handlePair}
+          className="mt-5 rounded-xl border bg-card p-5 shadow-sm"
+        >
+          <p className="text-sm font-medium">Enter the 8-character code shown on your Pixel screen</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Format: A–Z, 2–9 (no 0/O/1/I/L). Codes expire 10 min after device boot.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <input
+              autoFocus
+              value={pairCode}
+              onChange={(e) => setPairCode(e.target.value.toUpperCase().replace(/[\s-]/g, ""))}
+              placeholder="ABCD2345"
+              maxLength={8}
+              disabled={pairing}
+              className="flex-1 rounded-lg border bg-background px-3 py-2 font-mono text-base tracking-[0.2em] uppercase focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <button
+              type="submit"
+              disabled={pairing || pairCode.length !== 8}
+              className="rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {pairing ? "Pairing…" : "Pair"}
+            </button>
+          </div>
+          {pairError && (
+            <p className="mt-2 text-sm text-destructive">{pairError}</p>
+          )}
+          {pairSuccess && (
+            <p className="mt-2 text-sm text-emerald-600">✓ {pairSuccess}</p>
+          )}
+        </form>
+      )}
 
       {error && (
         <p className="mt-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -90,7 +166,7 @@ export default function DevicesPage() {
             <p className="font-medium text-foreground mb-1">How pairing works:</p>
             <ol className="list-decimal list-inside space-y-1">
               <li>Power on Pixel — it connects to WiFi and shows an 8-character code</li>
-              <li>Open this page and click <strong>Pair new device</strong> (coming soon)</li>
+              <li>Open this page and click <strong>+ Pair new device</strong></li>
               <li>Enter the code — device is linked to your account</li>
               <li>Pixel stores the permanent token and works without re-pairing</li>
             </ol>
