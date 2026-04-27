@@ -75,11 +75,20 @@ GEMINI_URL = (
 
 # Gemini 官方支持：wav / mp3 / aiff / aac / ogg / flac
 # WebM 容器装的是 Opus，和 OGG 一样的 codec — 把 mime 改成 audio/ogg 让 Gemini 接收
+# 固件多 part 上传偶尔会丢 Content-Type 退化成 application/octet-stream — 默认按 wav 处理（固件录的就是 WAV）
+GEMINI_SUPPORTED_AUDIO = {
+    "audio/wav", "audio/mpeg", "audio/mp3",
+    "audio/aiff", "audio/aac", "audio/ogg", "audio/flac",
+}
+
 def _gemini_audio_mime(raw_mime: str) -> str:
-    base = raw_mime.split(";")[0].strip().lower()
-    if base in ("audio/webm",):
+    base = (raw_mime or "").split(";")[0].strip().lower()
+    if base == "audio/webm":
         return "audio/ogg"
-    return base
+    if base in GEMINI_SUPPORTED_AUDIO:
+        return base
+    # 兜底：octet-stream / 空 / 未知 → 当 wav（固件 & web 端目前都送 wav）
+    return "audio/wav"
 
 
 async def _gemini_voice_call(
