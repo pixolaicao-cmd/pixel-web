@@ -67,7 +67,7 @@ PERSONALITY_DESC = {
 
 LANG_NAME = {"zh": "中文", "en": "英文", "no": "挪威语", "auto": "自动检测"}
 
-GEMINI_MODEL = os.getenv("GEMINI_VOICE_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite")
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_MODEL}:generateContent"
