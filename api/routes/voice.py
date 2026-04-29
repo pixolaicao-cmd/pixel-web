@@ -610,17 +610,28 @@ async def voice_pipeline(
             _set_recording_mode(current_user["sub"], new_state)
 
     if current_user:
-        if effective_recording:
-            try:
-                from database import get_db
-                get_db().table("conversations").insert([
-                    {"user_id": current_user["sub"], "role": "user",  "content": transcript},
-                    {"user_id": current_user["sub"], "role": "pixel", "content": reply_text},
-                ]).execute()
-                saved_ok = True
-            except Exception as e:
-                # 不阻塞用户体验，但要让前端知道
-                print(f"[voice] save conversation failed: {e}")
+        # 永远 insert — Pixel 需要短期上下文才能跨轮连贯
+        # 但 expires_at 决定这条是「永久档案」(NULL) 还是「短期内存」(24h 后清)
+        # - recording_mode ON → expires_at = NULL，会出现在网页 conversations 页
+        # - recording_mode OFF → expires_at = now + 24h，仅供 Pixel 拉取做上下文，不进 UI
+        try:
+            from database import get_db
+            from datetime import datetime, timezone, timedelta
+            if effective_recording:
+                expires_iso = None
+            else:
+                expires_iso = (datetime.now(timezone.utc)
+                               + timedelta(hours=24)).isoformat()
+            get_db().table("conversations").insert([
+                {"user_id": current_user["sub"], "role": "user",
+                 "content": transcript, "expires_at": expires_iso},
+                {"user_id": current_user["sub"], "role": "pixel",
+                 "content": reply_text, "expires_at": expires_iso},
+            ]).execute()
+            saved_ok = True
+        except Exception as e:
+            # 不阻塞用户体验，但要让前端知道
+            print(f"[voice] save conversation failed: {e}")
         # 自动学习：把 AI 提取的新记忆存进 memories 表
         # 不受 recording_mode 控制 — 长期记忆是 Pixel 的灵魂
         # 失败不影响用户体验，最坏只是这次对话的事实没记住，下次还有机会

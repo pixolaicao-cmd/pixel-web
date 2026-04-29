@@ -15,7 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
 from rate_limit import limiter
-from routes import transcribe, chat, speak, summarize, translate, users, conversations, notes, memories, soul, ui, voice, devices, import_file
+from routes import transcribe, chat, speak, summarize, translate, users, conversations, notes, memories, soul, ui, voice, devices, import_file, maintenance
 
 app = FastAPI(
     title="Pixel AI Backend",
@@ -56,6 +56,7 @@ app.include_router(ui.router,         prefix=PREFIX, tags=["UI"])
 app.include_router(voice.router,      prefix=PREFIX, tags=["Voice"])
 app.include_router(devices.router,     prefix=PREFIX, tags=["Devices"])
 app.include_router(import_file.router, prefix=PREFIX, tags=["Import"])
+app.include_router(maintenance.router, prefix=PREFIX, tags=["Maintenance"])
 
 
 @app.get("/api/health")

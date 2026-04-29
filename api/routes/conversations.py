@@ -18,18 +18,28 @@ class SaveMessageRequest(BaseModel):
 @router.get("")
 async def list_conversations(
     limit: int = Query(default=50, ge=1, le=500),
+    include_ephemeral: bool = Query(
+        default=False,
+        description="True 时连 24h 临时上下文也返回；默认只返回永久档案（recording_mode ON 时存的）",
+    ),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取用户的对话历史（最近 N 条）。"""
+    """获取用户的对话历史（最近 N 条）。
+
+    默认只返回 expires_at IS NULL 的永久档案 — 用户主动「开始记录」存下的对话。
+    短期 24h 临时上下文（recording_mode OFF 时仅供 Pixel 连贯使用）默认不展示。
+    """
     db = get_db()
-    result = (
+    q = (
         db.table("conversations")
         .select("*")
         .eq("user_id", current_user["sub"])
         .order("created_at", desc=True)
         .limit(limit)
-        .execute()
     )
+    if not include_ephemeral:
+        q = q.is_("expires_at", "null")
+    result = q.execute()
     return {"messages": list(reversed(result.data))}
 
 
