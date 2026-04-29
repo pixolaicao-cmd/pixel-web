@@ -437,7 +437,12 @@ def _build_soul_prompt(soul: dict) -> str:
 
 
 def _fetch_recent_conversation(user_id: str, limit: int = 30) -> str:
-    """拉最近 N 条对话作为记忆上下文，让 AI 跨天保持连贯。"""
+    """拉最近 N 条对话作为记忆上下文，让 AI 跨天保持连贯。
+
+    重要：不按 expires_at 过滤 — Pixel 需要看到全部最近对话（包括 24h 内的
+    临时上下文 + 用户主动记录的永久档案），否则关闭 recording_mode 后会失忆。
+    UI 端的过滤在 conversations.py 里做。
+    """
     try:
         from database import get_db
         from datetime import datetime, timezone
