@@ -505,8 +505,7 @@ async def voice_pipeline(
     if not reply_text:
         raise HTTPException(status_code=502, detail="AI returned empty reply")
 
-    # ── 3. TTS (edge-tts) ────────────────────────────────
-    t2 = time.perf_counter()
+    # ── 3. 选 TTS voice ──────────────────────────────────
     lang_code = "zh"
     if detected_lang.startswith("zh"):
         lang_code = "zh"
@@ -518,22 +517,10 @@ async def voice_pipeline(
     # 用 Soul 的 voice_style 选 voice，没匹配上回退到 warm
     voices_for_lang = VOICE_MAP_BY_STYLE.get(lang_code, VOICE_MAP_BY_STYLE["zh"])
     voice = voices_for_lang.get(soul_voice_style) or voices_for_lang["warm"]
-    try:
-        communicate = edge_tts.Communicate(reply_text, voice)
-        audio_buffer = io.BytesIO()
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_buffer.write(chunk["data"])
-        audio_buffer.seek(0)
-        if audio_buffer.getbuffer().nbytes == 0:
-            raise ValueError("Empty TTS output")
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"TTS error: {e}")
-    timings["tts_ms"] = int((time.perf_counter() - t2) * 1000)
 
-    # ── 4. 同步保存对话 + 自动学习记忆 ────────────────────
-    # 不能用 asyncio.create_task —— Vercel serverless 在 response 发出后
-    # 立刻冻结函数实例，后台 task 会被丢弃。必须 await 完成再返回。
+    # ── 4. 先保存 DB（流式开始后 Vercel 会冻结后台任务，必须前置 await）
+    # 不能用 asyncio.create_task —— Vercel serverless 在 response 开始流出后
+    # 立即冻结函数实例之间的空闲，后台 task 会被丢弃。必须 await 完成再 stream。
     t3 = time.perf_counter()
     saved_ok = False
     new_memories_count = 0
@@ -554,12 +541,39 @@ async def voice_pipeline(
             current_user["sub"], extracted_memories
         )
     timings["db_ms"] = int((time.perf_counter() - t3) * 1000)
+
+    # ── 5. 流式 TTS：边生成边 yield ────────────────────────
+    # tts_ms 在这个语义下表示「从启动 TTS 到第一个 audio chunk 的耗时」(TTFB)，
+    # 不再是 TTS 全段完成时间。total_ms 同理代表「response 头发出之前的总耗时」。
+    t2 = time.perf_counter()
     timings["total_ms"] = int((time.perf_counter() - t0) * 1000)
+    # 注意：headers 必须在 generator yield 第一帧之前固化，所以 timings 在这里冻结。
+    # 真正的 first-byte / TTS 时间可以在 generator 内补到 trailers，但 Vercel 不一定透传。
+
+    async def tts_stream():
+        nonlocal timings
+        try:
+            communicate = edge_tts.Communicate(reply_text, voice)
+            first_chunk = True
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio" and chunk.get("data"):
+                    if first_chunk:
+                        # 仅打印观测，不修改 header（已发出）
+                        ttfb = int((time.perf_counter() - t2) * 1000)
+                        print(f"[voice] TTS first audio chunk in {ttfb}ms")
+                        first_chunk = False
+                    yield chunk["data"]
+            if first_chunk:
+                # 一帧没出 → 上游 edge-tts 异常，但 response 头已发出，无法转 502
+                print("[voice] TTS produced 0 audio chunks")
+        except Exception as e:
+            # 流到一半上游断了，能做的只有日志 — client 会收到 EOF
+            print(f"[voice] TTS stream error: {e}")
 
     # 文字编码成 ASCII-safe header（去掉非 Latin-1 字符用 URL encoding）
     from urllib.parse import quote
     return StreamingResponse(
-        audio_buffer,
+        tts_stream(),
         media_type="audio/mpeg",
         headers={
             "X-Transcript":   quote(transcript[:200]),
@@ -571,8 +585,10 @@ async def voice_pipeline(
             "X-Memories-New":  str(new_memories_count),
             "X-Soul-Used":     "1" if soul_prompt else "0",
             "X-Voice":        voice,
-            # 后端分段计时（毫秒），前端能看到瓶颈在哪一段
+            # 后端分段计时（毫秒）— 流式化后 tts_ms 不再可在 header 报告，
+            # 改为运行时打印（见上方）
             "X-Timing":       json.dumps(timings),
+            "X-Streaming":    "1",
             "Content-Disposition": "inline; filename=pixel_reply.mp3",
         },
     )
