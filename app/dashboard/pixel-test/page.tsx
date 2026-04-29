@@ -361,7 +361,9 @@ export default function PixelTestPage() {
       const saved         = res.headers.get("X-Saved") === "1";
       const historyUsed   = parseInt(res.headers.get("X-History-Used") ?? "0", 10);
       const memoriesUsed  = parseInt(res.headers.get("X-Memories-Used") ?? "0", 10);
-      const memoriesNew   = parseInt(res.headers.get("X-Memories-New")  ?? "0", 10);
+      // 后端从同步写库改成 TTS 流期间后台异步写 → header 在写完前就发出来了
+      // 所以这是「Gemini 提取出几条候选」(planned)，去重/校验后实际入库可能更少
+      const memoriesNew   = parseInt(res.headers.get("X-Memories-Planned") ?? "0", 10);
       const soulUsed      = res.headers.get("X-Soul-Used") === "1";
       const voiceUsed     = res.headers.get("X-Voice") ?? "";
       let serverTiming: ServerTiming | undefined;

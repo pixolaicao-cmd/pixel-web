@@ -12,6 +12,7 @@ import re
 import json
 import time
 import base64
+import asyncio
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse
@@ -156,8 +157,9 @@ async def _gemini_voice_call(
         }],
         "generationConfig": {
             "responseMimeType": "application/json",
-            # 中文 token 占用大、历史上下文长 + 自动提取记忆 → 预算给充足
-            "maxOutputTokens": 3072,
+            # 回复 ≤3 句话 + transcript 短 + 最多 3 条记忆 → 1024 足够
+            # 上限调小不直接降延迟，但能让 Gemini 路由器更早出 token、降低被截断风险
+            "maxOutputTokens": 1024,
             "temperature": 0.7,
         },
     }
@@ -535,12 +537,15 @@ async def voice_pipeline(
     soul_lang_pref = "auto"
     recording_was_on = False  # 进入这次请求时的状态，用于 toggle 判定
     if current_user:
-        # 短期记忆：最近 20 条对话（覆盖最近几小时～一天），保持会话连贯
-        history_context = _fetch_recent_conversation(current_user["sub"], limit=20)
-        # 长期记忆：用户长期事实（喜好/关系/重要事件等），「越用越懂」的核心
-        memories_context = _fetch_recent_memories(current_user["sub"], limit=20)
-        # Soul 设置：人格 + 自定义指令 + 偏好语言 + 声音风格
-        soul = _fetch_soul(current_user["sub"])
+        # 三个独立的 DB 拉取并行跑 — supabase-py 是同步的，丢线程池里 gather
+        # 串行 ~300-450ms（3×单跳 RTT）→ 并行 ~150ms
+        # limit 收紧：history 20→12、memories 20→15。用户实测如果上下文还不够再调。
+        user_id = current_user["sub"]
+        history_context, memories_context, soul = await asyncio.gather(
+            asyncio.to_thread(_fetch_recent_conversation, user_id, 12),
+            asyncio.to_thread(_fetch_recent_memories, user_id, 15),
+            asyncio.to_thread(_fetch_soul, user_id),
+        )
         soul_prompt = _build_soul_prompt(soul)
         soul_voice_style = soul.get("voice_style") or "warm"
         soul_lang_pref = soul.get("language") or "auto"
@@ -585,65 +590,33 @@ async def voice_pipeline(
     voices_for_lang = VOICE_MAP_BY_STYLE.get(lang_code, VOICE_MAP_BY_STYLE["zh"])
     voice = voices_for_lang.get(soul_voice_style) or voices_for_lang["warm"]
 
-    # ── 4. 先保存 DB（流式开始后 Vercel 会冻结后台任务，必须前置 await）
-    # 不能用 asyncio.create_task —— Vercel serverless 在 response 开始流出后
-    # 立即冻结函数实例之间的空闲，后台 task 会被丢弃。必须 await 完成再 stream。
+    # ── 4. DB 写入改成「TTS 流式中并行」：
+    # 之前是先 await 写完 → 再启 TTS（~300-500ms 全部计入首帧延迟）
+    # 现在：在生成器里 create_task 开后台写，generator 结束前 await 它收尾。
+    # generator 还在 yield → Vercel 函数实例不会被冻结 → 后台 task 安全完成。
     #
     # 记录模式逻辑：
-    #   - 默认 OFF：普通闲聊不写 conversations（节省云端存储 & 隐私）
-    #   - 用户说 "开始记录" → 这一轮 + 之后所有轮都写
-    #   - 用户说 "停止记录" → 这一轮就停（停止那句不存）
-    #   - memories 永远存 — 「越用越懂你」的核心，不能因为记录模式关闭就丢
-    t3 = time.perf_counter()
-    saved_ok = False
-    new_memories_count = 0
+    #   - 默认 OFF：闲聊只存 24h 临时上下文（expires_at = now + 24h）
+    #   - 用户说 "开始记录" → 这一轮 + 之后所有轮都写永久档案 (expires_at = NULL)
+    #   - 用户说 "停止记录" → 切回 24h 临时模式
+    #   - memories 永远存（「越用越懂」的核心，不受 recording_mode 影响）
     toggle: str | None = None
     effective_recording = False
+    new_state_to_persist: bool | None = None
     if current_user:
         toggle = _detect_recording_toggle(transcript)
-        # 这一轮是否要写 conversations
         if toggle == "on":
             effective_recording = True
         elif toggle == "off":
             effective_recording = False
         else:
             effective_recording = recording_was_on
-    # 把状态变化落库（仅当 toggle 命中且和现状不一致）
-    if current_user and toggle is not None:
-        new_state = (toggle == "on")
-        if new_state != recording_was_on:
-            _set_recording_mode(current_user["sub"], new_state)
-
-    if current_user:
-        # 永远 insert — Pixel 需要短期上下文才能跨轮连贯
-        # 但 expires_at 决定这条是「永久档案」(NULL) 还是「短期内存」(24h 后清)
-        # - recording_mode ON → expires_at = NULL，会出现在网页 conversations 页
-        # - recording_mode OFF → expires_at = now + 24h，仅供 Pixel 拉取做上下文，不进 UI
-        try:
-            from database import get_db
-            from datetime import datetime, timezone, timedelta
-            if effective_recording:
-                expires_iso = None
-            else:
-                expires_iso = (datetime.now(timezone.utc)
-                               + timedelta(hours=24)).isoformat()
-            get_db().table("conversations").insert([
-                {"user_id": current_user["sub"], "role": "user",
-                 "content": transcript, "expires_at": expires_iso},
-                {"user_id": current_user["sub"], "role": "pixel",
-                 "content": reply_text, "expires_at": expires_iso},
-            ]).execute()
-            saved_ok = True
-        except Exception as e:
-            # 不阻塞用户体验，但要让前端知道
-            print(f"[voice] save conversation failed: {e}")
-        # 自动学习：把 AI 提取的新记忆存进 memories 表
-        # 不受 recording_mode 控制 — 长期记忆是 Pixel 的灵魂
-        # 失败不影响用户体验，最坏只是这次对话的事实没记住，下次还有机会
-        new_memories_count = _save_extracted_memories(
-            current_user["sub"], extracted_memories
-        )
-    timings["db_ms"] = int((time.perf_counter() - t3) * 1000)
+        if toggle is not None:
+            new_state = (toggle == "on")
+            if new_state != recording_was_on:
+                new_state_to_persist = new_state
+    # db_ms 在这里只衡量「准备时间」（基本 0），真实写入耗时在 generator 里观测
+    timings["db_ms"] = 0
 
     # ── 5. 流式 TTS：边生成边 yield ────────────────────────
     # tts_ms 在这个语义下表示「从启动 TTS 到第一个 audio chunk 的耗时」(TTFB)，
@@ -653,25 +626,58 @@ async def voice_pipeline(
     # 注意：headers 必须在 generator yield 第一帧之前固化，所以 timings 在这里冻结。
     # 真正的 first-byte / TTS 时间可以在 generator 内补到 trailers，但 Vercel 不一定透传。
 
+    def _persist_all_sync():
+        """所有 DB 写入打包到一个同步函数里，扔线程池跑。
+        失败吞掉只打日志 — 用户体验绝不阻塞、绝不出错。
+        """
+        try:
+            if new_state_to_persist is not None and current_user:
+                _set_recording_mode(current_user["sub"], new_state_to_persist)
+            if current_user:
+                from database import get_db
+                from datetime import datetime, timezone, timedelta
+                if effective_recording:
+                    expires_iso = None
+                else:
+                    expires_iso = (datetime.now(timezone.utc)
+                                   + timedelta(hours=24)).isoformat()
+                get_db().table("conversations").insert([
+                    {"user_id": current_user["sub"], "role": "user",
+                     "content": transcript, "expires_at": expires_iso},
+                    {"user_id": current_user["sub"], "role": "pixel",
+                     "content": reply_text, "expires_at": expires_iso},
+                ]).execute()
+                _save_extracted_memories(current_user["sub"], extracted_memories)
+        except Exception as e:
+            print(f"[voice] background persist failed: {e}")
+
     async def tts_stream():
-        nonlocal timings
+        # 后台任务：TTS 流刚启动就并行开写库，不阻塞首帧
+        persist_task = None
+        if current_user:
+            persist_task = asyncio.create_task(asyncio.to_thread(_persist_all_sync))
         try:
             communicate = edge_tts.Communicate(reply_text, voice)
             first_chunk = True
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio" and chunk.get("data"):
                     if first_chunk:
-                        # 仅打印观测，不修改 header（已发出）
                         ttfb = int((time.perf_counter() - t2) * 1000)
                         print(f"[voice] TTS first audio chunk in {ttfb}ms")
                         first_chunk = False
                     yield chunk["data"]
             if first_chunk:
-                # 一帧没出 → 上游 edge-tts 异常，但 response 头已发出，无法转 502
                 print("[voice] TTS produced 0 audio chunks")
         except Exception as e:
-            # 流到一半上游断了，能做的只有日志 — client 会收到 EOF
             print(f"[voice] TTS stream error: {e}")
+        finally:
+            # 等后台 DB 写完再退出 generator —— 否则 Vercel 会立刻冻结实例，
+            # 写到一半的 task 被吞，对话/记忆就丢了
+            if persist_task is not None:
+                try:
+                    await persist_task
+                except Exception as e:
+                    print(f"[voice] persist_task await error: {e}")
 
     # 文字编码成 ASCII-safe header（去掉非 Latin-1 字符用 URL encoding）
     from urllib.parse import quote
@@ -682,13 +688,16 @@ async def voice_pipeline(
             "X-Transcript":   quote(transcript[:200]),
             "X-Reply":        quote(reply_text[:200]),
             "X-Language":     detected_lang or "zh",
-            "X-Saved":        "1" if saved_ok else "0",
-            "X-Recording":    "1" if effective_recording else "0",
-            "X-Recording-Toggle": toggle or "",
-            "X-History-Used":  str(len(history_context)),
-            "X-Memories-Used": str(len(memories_context)),
-            "X-Memories-New":  str(new_memories_count),
-            "X-Soul-Used":     "1" if soul_prompt else "0",
+            # 后台异步写库 → header 必须在流出前定，所以这两个是「计划值」
+            # X-Saved=1 表示我们派发了写入任务（不等于真的写成功，失败看后端 log）
+            # X-Memories-Planned 是 Gemini 提取出的候选数量，去重/校验后实际入库可能更少
+            "X-Saved":              "1" if current_user else "0",
+            "X-Recording":          "1" if effective_recording else "0",
+            "X-Recording-Toggle":   toggle or "",
+            "X-History-Used":       str(len(history_context)),
+            "X-Memories-Used":      str(len(memories_context)),
+            "X-Memories-Planned":   str(len(extracted_memories) if isinstance(extracted_memories, list) else 0),
+            "X-Soul-Used":          "1" if soul_prompt else "0",
             "X-Voice":        voice,
             # 后端分段计时（毫秒）— 流式化后 tts_ms 不再可在 header 报告，
             # 改为运行时打印（见上方）
