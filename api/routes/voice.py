@@ -332,6 +332,7 @@ def _fetch_soul(user_id: str) -> dict:
         "language": "auto",
         "voice_style": "warm",
         "custom_prompt": "",
+        "recording_mode": False,
     }
     try:
         from database import get_db
@@ -343,10 +344,69 @@ def _fetch_soul(user_id: str) -> dict:
         )
         if result.data:
             row = result.data[0]
-            return {k: (row.get(k) or v) for k, v in defaults.items()}
+            # recording_mode 是 bool，不能用 `or v` 融合（False 会被回退成默认）
+            merged = {}
+            for k, v in defaults.items():
+                raw = row.get(k)
+                if k == "recording_mode":
+                    merged[k] = bool(raw) if raw is not None else v
+                else:
+                    merged[k] = raw or v
+            return merged
     except Exception:
         pass
     return defaults
+
+
+# ── 记录模式开关：通过语音指令触发 ─────────────────────────
+# 触发短语 — 大小写/标点不敏感，只要 transcript 包含其中之一就视为指令
+RECORDING_ON_PHRASES = [
+    "开始记录", "开始保存", "开始录", "记录开始", "保存开始",
+    "start recording", "start saving", "begin recording",
+    "start ta opp", "begynn å lagre",
+]
+RECORDING_OFF_PHRASES = [
+    "停止记录", "停止保存", "停止录", "结束记录", "结束保存",
+    "不要记录了", "别记录了", "关闭记录",
+    "stop recording", "stop saving", "end recording",
+    "stopp opptak", "slutt å lagre",
+]
+
+
+def _detect_recording_toggle(transcript: str) -> str | None:
+    """
+    扫描 transcript 是否包含开/关记录指令。
+    返回 'on' / 'off' / None。
+
+    设计：保持简单字符串匹配，比让 Gemini 输出额外字段更稳。
+    用户说「我们开始记录这次会议」也能命中 — 这是预期行为。
+    """
+    if not transcript:
+        return None
+    lower = transcript.lower()
+    # 关闭命令优先（避免「不要记录了，开始正常聊天」这类误判 → 应该是关）
+    for phrase in RECORDING_OFF_PHRASES:
+        if phrase.lower() in lower:
+            return "off"
+    for phrase in RECORDING_ON_PHRASES:
+        if phrase.lower() in lower:
+            return "on"
+    return None
+
+
+def _set_recording_mode(user_id: str, enabled: bool) -> bool:
+    """落库 recording_mode；失败不抛，返回是否成功。"""
+    try:
+        from database import get_db
+        # upsert：用户首次切换时 soul_settings 行可能还不存在
+        get_db().table("soul_settings").upsert(
+            {"user_id": user_id, "recording_mode": enabled},
+            on_conflict="user_id",
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"[voice] set recording_mode failed: {e}")
+        return False
 
 
 def _build_soul_prompt(soul: dict) -> str:
@@ -468,6 +528,7 @@ async def voice_pipeline(
     soul_prompt = ""
     soul_voice_style = "warm"
     soul_lang_pref = "auto"
+    recording_was_on = False  # 进入这次请求时的状态，用于 toggle 判定
     if current_user:
         # 短期记忆：最近 20 条对话（覆盖最近几小时～一天），保持会话连贯
         history_context = _fetch_recent_conversation(current_user["sub"], limit=20)
@@ -478,6 +539,7 @@ async def voice_pipeline(
         soul_prompt = _build_soul_prompt(soul)
         soul_voice_style = soul.get("voice_style") or "warm"
         soul_lang_pref = soul.get("language") or "auto"
+        recording_was_on = bool(soul.get("recording_mode"))
     system_prompt = PIXEL_SYSTEM_PROMPT + soul_prompt + memories_context + history_context
     timings["setup_ms"] = int((time.perf_counter() - t0) * 1000)
 
@@ -521,21 +583,46 @@ async def voice_pipeline(
     # ── 4. 先保存 DB（流式开始后 Vercel 会冻结后台任务，必须前置 await）
     # 不能用 asyncio.create_task —— Vercel serverless 在 response 开始流出后
     # 立即冻结函数实例之间的空闲，后台 task 会被丢弃。必须 await 完成再 stream。
+    #
+    # 记录模式逻辑：
+    #   - 默认 OFF：普通闲聊不写 conversations（节省云端存储 & 隐私）
+    #   - 用户说 "开始记录" → 这一轮 + 之后所有轮都写
+    #   - 用户说 "停止记录" → 这一轮就停（停止那句不存）
+    #   - memories 永远存 — 「越用越懂你」的核心，不能因为记录模式关闭就丢
     t3 = time.perf_counter()
     saved_ok = False
     new_memories_count = 0
+    toggle: str | None = None
+    effective_recording = False
     if current_user:
-        try:
-            from database import get_db
-            get_db().table("conversations").insert([
-                {"user_id": current_user["sub"], "role": "user",  "content": transcript},
-                {"user_id": current_user["sub"], "role": "pixel", "content": reply_text},
-            ]).execute()
-            saved_ok = True
-        except Exception as e:
-            # 不阻塞用户体验，但要让前端知道
-            print(f"[voice] save conversation failed: {e}")
+        toggle = _detect_recording_toggle(transcript)
+        # 这一轮是否要写 conversations
+        if toggle == "on":
+            effective_recording = True
+        elif toggle == "off":
+            effective_recording = False
+        else:
+            effective_recording = recording_was_on
+    # 把状态变化落库（仅当 toggle 命中且和现状不一致）
+    if current_user and toggle is not None:
+        new_state = (toggle == "on")
+        if new_state != recording_was_on:
+            _set_recording_mode(current_user["sub"], new_state)
+
+    if current_user:
+        if effective_recording:
+            try:
+                from database import get_db
+                get_db().table("conversations").insert([
+                    {"user_id": current_user["sub"], "role": "user",  "content": transcript},
+                    {"user_id": current_user["sub"], "role": "pixel", "content": reply_text},
+                ]).execute()
+                saved_ok = True
+            except Exception as e:
+                # 不阻塞用户体验，但要让前端知道
+                print(f"[voice] save conversation failed: {e}")
         # 自动学习：把 AI 提取的新记忆存进 memories 表
+        # 不受 recording_mode 控制 — 长期记忆是 Pixel 的灵魂
         # 失败不影响用户体验，最坏只是这次对话的事实没记住，下次还有机会
         new_memories_count = _save_extracted_memories(
             current_user["sub"], extracted_memories
@@ -580,6 +667,8 @@ async def voice_pipeline(
             "X-Reply":        quote(reply_text[:200]),
             "X-Language":     detected_lang or "zh",
             "X-Saved":        "1" if saved_ok else "0",
+            "X-Recording":    "1" if effective_recording else "0",
+            "X-Recording-Toggle": toggle or "",
             "X-History-Used":  str(len(history_context)),
             "X-Memories-Used": str(len(memories_context)),
             "X-Memories-New":  str(new_memories_count),
