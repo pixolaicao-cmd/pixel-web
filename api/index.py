@@ -27,23 +27,13 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS：生产只放自己的域名，dev 环境再加 localhost
-# 风险：之前 production 也放 localhost → 用户访问恶意页面时，该页让本地
-# dev server 上的 JS 跨域调我们的 API。VERCEL_ENV 是 Vercel 自动注入的。
-_VERCEL_ENV = os.getenv("VERCEL_ENV", "development")
-_allowed_origins = [
-    "https://pixel-web-three.vercel.app",
-]
-if _VERCEL_ENV != "production":
-    _allowed_origins += [
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ]
+# 开发环境允许 localhost，生产环境同域不需要 CORS 但保留兼容
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
-    # 预览部署的 *.vercel.app 子域用正则放行 — origins 列表不支持通配符
-    allow_origin_regex=r"https://pixel-[a-z0-9-]+-pixolaicao-8971s-projects\.vercel\.app",
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
