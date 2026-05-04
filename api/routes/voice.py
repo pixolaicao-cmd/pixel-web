@@ -363,15 +363,32 @@ def _fetch_soul(user_id: str) -> dict:
 # ── 记录模式开关：通过语音指令触发 ─────────────────────────
 # 触发短语 — 大小写/标点不敏感，只要 transcript 包含其中之一就视为指令
 RECORDING_ON_PHRASES = [
+    # 中文 — 正式
     "开始记录", "开始保存", "开始录", "记录开始", "保存开始",
+    "开始录音", "开始录下来", "录起来", "开始录起来",
+    # 中文 — 口语化（用户实测说"录音"、"录一下"也算触发）
+    "录音", "录下来", "录一下", "录一段",
+    "记下来", "记一下", "帮我记", "帮我录",
+    "保存对话", "保存这段", "保存这次",
+    "把这段录下来", "把它录下来", "把这段记下来",
+    # English
     "start recording", "start saving", "begin recording",
-    "start ta opp", "begynn å lagre",
+    "record this", "save this", "save the conversation",
+    # Norsk
+    "start ta opp", "begynn å lagre", "ta opp dette", "lagre samtalen",
 ]
 RECORDING_OFF_PHRASES = [
+    # 中文 — 正式
     "停止记录", "停止保存", "停止录", "结束记录", "结束保存",
-    "不要记录了", "别记录了", "关闭记录",
+    "停止录音", "结束录音", "关闭记录", "关闭录音",
+    # 中文 — 口语化
+    "不要记录了", "别记录了", "别记了", "别录了", "不录了", "不记了",
+    "不用录了", "不用记了", "停下", "够了 别录了",
+    # English
     "stop recording", "stop saving", "end recording",
-    "stopp opptak", "slutt å lagre",
+    "stop the recording", "don't record",
+    # Norsk
+    "stopp opptak", "slutt å lagre", "stopp innspilling",
 ]
 
 
