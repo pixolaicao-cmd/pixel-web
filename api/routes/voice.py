@@ -335,6 +335,9 @@ def _fetch_soul(user_id: str) -> dict:
         "voice_style": "warm",
         "custom_prompt": "",
         "recording_mode": False,
+        "translation_mode": False,
+        "translation_lang_a": None,
+        "translation_lang_b": None,
     }
     try:
         from database import get_db
@@ -346,12 +349,17 @@ def _fetch_soul(user_id: str) -> dict:
         )
         if result.data:
             row = result.data[0]
-            # recording_mode 是 bool，不能用 `or v` 融合（False 会被回退成默认）
+            # bool 字段不能用 `or v` 融合（False 会被回退成默认）；
+            # 语言字段可以是 None
+            BOOL_KEYS = {"recording_mode", "translation_mode"}
+            NULLABLE_KEYS = {"translation_lang_a", "translation_lang_b"}
             merged = {}
             for k, v in defaults.items():
                 raw = row.get(k)
-                if k == "recording_mode":
+                if k in BOOL_KEYS:
                     merged[k] = bool(raw) if raw is not None else v
+                elif k in NULLABLE_KEYS:
+                    merged[k] = raw  # 允许 None
                 else:
                     merged[k] = raw or v
             return merged
@@ -363,9 +371,11 @@ def _fetch_soul(user_id: str) -> dict:
 # ── 记录模式开关：通过语音指令触发 ─────────────────────────
 # 触发短语 — 大小写/标点不敏感，只要 transcript 包含其中之一就视为指令
 RECORDING_ON_PHRASES = [
-    # 中文 — 正式
+    # 中文 — 正式（"开始/打开/开" 三种前缀）
     "开始记录", "开始保存", "开始录", "记录开始", "保存开始",
     "开始录音", "开始录下来", "录起来", "开始录起来",
+    "打开记录", "打开录音", "打开记录功能", "打开录音功能",
+    "开记录", "开录音", "开启记录", "开启录音",
     # 中文 — 口语化（用户实测说"录音"、"录一下"也算触发）
     "录音", "录下来", "录一下", "录一段",
     "记下来", "记一下", "帮我记", "帮我录",
@@ -374,22 +384,129 @@ RECORDING_ON_PHRASES = [
     # English
     "start recording", "start saving", "begin recording",
     "record this", "save this", "save the conversation",
+    "turn on recording", "enable recording",
     # Norsk
     "start ta opp", "begynn å lagre", "ta opp dette", "lagre samtalen",
+    "skru på opptak", "slå på opptak",
 ]
 RECORDING_OFF_PHRASES = [
     # 中文 — 正式
     "停止记录", "停止保存", "停止录", "结束记录", "结束保存",
     "停止录音", "结束录音", "关闭记录", "关闭录音",
+    "关闭记录功能", "关闭录音功能", "关掉记录", "关掉录音",
     # 中文 — 口语化
     "不要记录了", "别记录了", "别记了", "别录了", "不录了", "不记了",
     "不用录了", "不用记了", "停下", "够了 别录了",
     # English
     "stop recording", "stop saving", "end recording",
     "stop the recording", "don't record",
+    "turn off recording", "disable recording",
     # Norsk
     "stopp opptak", "slutt å lagre", "stopp innspilling",
+    "skru av opptak", "slå av opptak",
 ]
+
+
+# ── 翻译模式开关：通过语音指令触发 ─────────────────────────
+# 翻译模式是双向：用户讲 lang_a → 回 lang_b；讲 lang_b → 回 lang_a。
+# 触发短语里要能解析出语言对（中-挪 / 中-英 / 英-挪）。
+TRANSLATION_OFF_PHRASES = [
+    # 中文
+    "关闭翻译", "退出翻译", "停止翻译", "不要翻译了", "别翻译了",
+    "关掉翻译", "关闭翻译模式", "退出翻译模式",
+    # English
+    "stop translation", "stop translating", "exit translation",
+    "turn off translation", "disable translation",
+    # Norsk
+    "stopp oversettelse", "avslutt oversettelse",
+]
+# ON 触发关键词（任意一个 + 至少两种语言名 → 进入翻译模式）
+TRANSLATION_ON_KEYWORDS = [
+    "翻译", "互译", "翻一下",
+    "translate", "translation",
+    "oversett", "oversettelse",
+]
+# 语言名 → 标准代码（中文需要先识别，再判断 lang_a/lang_b）
+LANG_ALIASES = {
+    "zh": ["中文", "中国话", "汉语", "普通话", "国语", "chinese", "mandarin", "kinesisk"],
+    "no": ["挪威", "挪威语", "挪威话", "norwegian", "norsk", "bokmål", "nynorsk"],
+    "en": ["英文", "英语", "english", "engelsk"],
+}
+
+
+def _detect_translation_off(transcript: str) -> bool:
+    if not transcript:
+        return False
+    lower = transcript.lower()
+    return any(p.lower() in lower for p in TRANSLATION_OFF_PHRASES)
+
+
+def _detect_translation_on(transcript: str) -> tuple[str, str] | None:
+    """
+    检测翻译开启指令并解析语言对。
+    返回 (lang_a, lang_b) 或 None。
+    例：「打开中文挪威语翻译」→ ("zh", "no")
+        「我说中文你说挪威语」→ ("zh", "no")
+    规则：
+      - 必须命中至少一个 TRANSLATION_ON_KEYWORDS 才算开启意图
+      - 然后从 transcript 里抓两种不同的语言（按出现顺序，第一个=lang_a）
+    """
+    if not transcript:
+        return None
+    lower = transcript.lower()
+    # 不是开启意图就不进
+    if not any(kw.lower() in lower for kw in TRANSLATION_ON_KEYWORDS):
+        return None
+    # 在 transcript 里找语言名出现的位置
+    found: list[tuple[int, str]] = []  # (位置, 语言代码)
+    for code, aliases in LANG_ALIASES.items():
+        for alias in aliases:
+            idx = lower.find(alias)
+            if idx >= 0:
+                found.append((idx, code))
+                break  # 同一语言只记第一次
+    if len(found) < 2:
+        return None
+    # 按出现顺序取头两个不同语言
+    found.sort()
+    seen: list[str] = []
+    for _, code in found:
+        if code not in seen:
+            seen.append(code)
+        if len(seen) == 2:
+            break
+    if len(seen) < 2:
+        return None
+    return (seen[0], seen[1])
+
+
+def _set_translation_mode(
+    user_id: str,
+    enabled: bool,
+    lang_a: str | None = None,
+    lang_b: str | None = None,
+) -> bool:
+    """落库 translation_mode + 语言对。失败不抛。"""
+    try:
+        from database import get_db
+        payload: dict = {
+            "user_id": user_id,
+            "translation_mode": enabled,
+        }
+        # 关闭时清空语言对（避免下次开启被旧值污染判定）
+        if enabled:
+            payload["translation_lang_a"] = lang_a
+            payload["translation_lang_b"] = lang_b
+        else:
+            payload["translation_lang_a"] = None
+            payload["translation_lang_b"] = None
+        get_db().table("soul_settings").upsert(
+            payload, on_conflict="user_id"
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"[voice] set translation_mode failed: {e}")
+        return False
 
 
 def _detect_recording_toggle(transcript: str) -> str | None:
@@ -452,6 +569,32 @@ def _build_soul_prompt(soul: dict) -> str:
         lines.append(f"- 用户偏好用 {LANG_NAME.get(language, language)} 交流（除非用户明确切换语言，否则尽量用这个语言）")
     if custom:
         lines.append(f"- 用户对你的特别要求：{custom}")
+
+    # 翻译模式 — 强指令，盖过 system_prompt 的默认对话行为
+    # （system_prompt 里的翻译段是回退方案；这里有明确状态时直接注入）
+    if soul.get("translation_mode"):
+        lang_a = soul.get("translation_lang_a")
+        lang_b = soul.get("translation_lang_b")
+        if lang_a and lang_b:
+            a_name = LANG_NAME.get(lang_a, lang_a)
+            b_name = LANG_NAME.get(lang_b, lang_b)
+            lines.append("")
+            lines.append("【⚠️ 翻译模式：当前激活】")
+            lines.append(
+                f"- 用户讲 {a_name} → 你只回 {b_name} 译文；"
+                f"用户讲 {b_name} → 你只回 {a_name} 译文"
+            )
+            lines.append(
+                f"- reply 字段填**纯译文**，不要寒暄、不要解释、不要前缀"
+                f'（不要说"翻译过来是..."、"你说的是..."）'
+            )
+            lines.append(
+                f"- language 字段填**译文**的语言代码（{lang_a} 或 {lang_b}）"
+            )
+            lines.append(
+                "- 如果用户说的不是这两种语言（例如英文），保持当前模式 "
+                "但用最接近的语言回译，并在脑内忽略此句不影响开关"
+            )
     return "\n".join(lines)
 
 
@@ -553,6 +696,9 @@ async def voice_pipeline(
     soul_voice_style = "warm"
     soul_lang_pref = "auto"
     recording_was_on = False  # 进入这次请求时的状态，用于 toggle 判定
+    translation_was_on = False
+    translation_lang_a_was: str | None = None
+    translation_lang_b_was: str | None = None
     if current_user:
         # 三个独立的 DB 拉取并行跑 — supabase-py 是同步的，丢线程池里 gather
         # 串行 ~300-450ms（3×单跳 RTT）→ 并行 ~150ms
@@ -567,6 +713,9 @@ async def voice_pipeline(
         soul_voice_style = soul.get("voice_style") or "warm"
         soul_lang_pref = soul.get("language") or "auto"
         recording_was_on = bool(soul.get("recording_mode"))
+        translation_was_on = bool(soul.get("translation_mode"))
+        translation_lang_a_was = soul.get("translation_lang_a")
+        translation_lang_b_was = soul.get("translation_lang_b")
     system_prompt = PIXEL_SYSTEM_PROMPT + soul_prompt + memories_context + history_context
     timings["setup_ms"] = int((time.perf_counter() - t0) * 1000)
 
@@ -620,6 +769,11 @@ async def voice_pipeline(
     toggle: str | None = None
     effective_recording = False
     new_state_to_persist: bool | None = None
+    # 翻译模式 toggle —— 同样的双状态机：off > on（避免「不要翻译了，开始正常聊」误开）
+    translation_toggle: str | None = None
+    translation_state_to_persist: tuple[bool, str | None, str | None] | None = None
+    effective_translation = False
+    effective_translation_pair: tuple[str | None, str | None] = (None, None)
     if current_user:
         toggle = _detect_recording_toggle(transcript)
         if toggle == "on":
@@ -632,6 +786,29 @@ async def voice_pipeline(
             new_state = (toggle == "on")
             if new_state != recording_was_on:
                 new_state_to_persist = new_state
+
+        # 翻译模式 toggle：先检测关闭，再检测开启
+        if _detect_translation_off(transcript):
+            translation_toggle = "off"
+            effective_translation = False
+            effective_translation_pair = (None, None)
+            if translation_was_on:
+                translation_state_to_persist = (False, None, None)
+        else:
+            pair = _detect_translation_on(transcript)
+            if pair is not None:
+                translation_toggle = "on"
+                effective_translation = True
+                effective_translation_pair = pair
+                # 状态变化条件：之前没开 / 之前开的语言对不一样
+                if (not translation_was_on
+                        or translation_lang_a_was != pair[0]
+                        or translation_lang_b_was != pair[1]):
+                    translation_state_to_persist = (True, pair[0], pair[1])
+            else:
+                # 没说翻译相关，沿用现有状态
+                effective_translation = translation_was_on
+                effective_translation_pair = (translation_lang_a_was, translation_lang_b_was)
     # db_ms 在这里只衡量「准备时间」（基本 0），真实写入耗时在 generator 里观测
     timings["db_ms"] = 0
 
@@ -650,6 +827,9 @@ async def voice_pipeline(
         try:
             if new_state_to_persist is not None and current_user:
                 _set_recording_mode(current_user["sub"], new_state_to_persist)
+            if translation_state_to_persist is not None and current_user:
+                _enabled, _la, _lb = translation_state_to_persist
+                _set_translation_mode(current_user["sub"], _enabled, _la, _lb)
             if current_user:
                 from database import get_db
                 from datetime import datetime, timezone, timedelta
@@ -711,6 +891,12 @@ async def voice_pipeline(
             "X-Saved":              "1" if current_user else "0",
             "X-Recording":          "1" if effective_recording else "0",
             "X-Recording-Toggle":   toggle or "",
+            "X-Translation":        "1" if effective_translation else "0",
+            "X-Translation-Pair":   (
+                f"{effective_translation_pair[0]}:{effective_translation_pair[1]}"
+                if effective_translation and all(effective_translation_pair) else ""
+            ),
+            "X-Translation-Toggle": translation_toggle or "",
             "X-History-Used":       str(len(history_context)),
             "X-Memories-Used":      str(len(memories_context)),
             "X-Memories-Planned":   str(len(extracted_memories) if isinstance(extracted_memories, list) else 0),

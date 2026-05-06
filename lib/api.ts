@@ -371,7 +371,9 @@ export async function getSoul() {
   return res.json();
 }
 
-export async function updateSoul(settings: Record<string, string>) {
+export async function updateSoul(
+  settings: Record<string, string | boolean | null | undefined>,
+) {
   const res = await fetch(`${API_BASE}/soul`, {
     method: "PUT",
     headers: authHeaders(),

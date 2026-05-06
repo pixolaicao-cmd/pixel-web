@@ -17,6 +17,10 @@ DEFAULT_SOUL = {
     "language": "auto",
     "voice_style": "warm",
     "custom_prompt": "",
+    "recording_mode": False,
+    "translation_mode": False,
+    "translation_lang_a": None,
+    "translation_lang_b": None,
 }
 
 
@@ -41,6 +45,11 @@ class UpdateSoulRequest(BaseModel):
     language: Optional[str] = Field(default=None, pattern="^(auto|zh|en|no)$")
     voice_style: Optional[str] = Field(default=None, pattern="^(warm|energetic|calm|serious)$")
     custom_prompt: Optional[str] = Field(default=None, max_length=500)
+    # 用户开关 — UI 主路径，比语音触发更可靠
+    recording_mode: Optional[bool] = None
+    translation_mode: Optional[bool] = None
+    translation_lang_a: Optional[str] = Field(default=None, pattern="^(zh|en|no)$")
+    translation_lang_b: Optional[str] = Field(default=None, pattern="^(zh|en|no)$")
 
 
 def _sanitize_custom_prompt(text: str) -> str:
