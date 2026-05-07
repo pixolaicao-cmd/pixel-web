@@ -96,9 +96,36 @@ async def _gemini_voice_call(
     audio_bytes: bytes,
     audio_mime: str,
     system_prompt: str,
+    translation_mode: bool = False,
+    translation_lang_a: str | None = None,
+    translation_lang_b: str | None = None,
 ) -> dict:
     """一次调用：音频 → {transcript, language, reply, new_memories}"""
     audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+
+    # 翻译模式 — 必须在 instructions 头部强制，否则会被下面的"默认相同语言"覆盖。
+    # 这是用户开了 chip / dashboard / 语音触发后必须遵守的最高优先级规则。
+    translation_block = ""
+    if translation_mode and translation_lang_a and translation_lang_b:
+        a_name = LANG_NAME.get(translation_lang_a, translation_lang_a)
+        b_name = LANG_NAME.get(translation_lang_b, translation_lang_b)
+        translation_block = (
+            "\n\n【⚠️ 当前翻译模式已开启 — 这是最高优先级规则，覆盖下面所有"
+            "「相同语言回复」的默认行为】\n"
+            f"- 用户讲 {a_name}（{translation_lang_a}）→ reply 必须**只**用 "
+            f"{b_name}（{translation_lang_b}）写译文\n"
+            f"- 用户讲 {b_name}（{translation_lang_b}）→ reply 必须**只**用 "
+            f"{a_name}（{translation_lang_a}）写译文\n"
+            "- reply 字段填**纯译文**，不要寒暄、不要解释、不要任何前缀（"
+            '不要说"翻译过来是"、"你说的是"、"好的"）\n'
+            f"- language 字段填**译文**的语言代码（{translation_lang_a} 或 "
+            f"{translation_lang_b}）\n"
+            "- 不要因为用户说「你好」「谢谢」就回复闲聊 — 翻译模式下连寒暄"
+            "都翻译\n"
+            "- 仅当用户明确说「关闭翻译」「退出翻译」「stop translation」之类"
+            "才退出此模式（系统会自行处理状态切换，你照常输出译文即可）\n"
+        )
+
     instructions = (
         "用户刚刚发送了一段语音。请你完成三件事，并以 JSON 格式输出：\n"
         '{\n'
@@ -107,8 +134,11 @@ async def _gemini_voice_call(
         '  "reply":        "<你的口语化回复，不超过3句话>",\n'
         '  "new_memories": [{"content": "<事实>", "category": "<分类>"}]\n'
         '}\n'
+        + translation_block +
         "\n"
         "【回复语言规则 — 重要】\n"
+        + ("（注意：上面【翻译模式】规则覆盖此节，翻译模式下整段忽略下面的「相同语言」默认）\n"
+           if translation_block else "") +
         "1. 默认：用和用户相同的语言回复，language 也填那个。\n"
         "2. 翻译场景：如果用户要求把某句话翻译成 X 语，那 reply **整句**就用 X 语写，"
         "language 字段也填 X 语（zh/en/no）。不要用源语言加引号包裹译文，"
@@ -725,6 +755,9 @@ async def voice_pipeline(
             audio_bytes=audio_data,
             audio_mime=_gemini_audio_mime(raw_content_type),
             system_prompt=system_prompt,
+            translation_mode=translation_was_on,
+            translation_lang_a=translation_lang_a_was,
+            translation_lang_b=translation_lang_b_was,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI error: {e}")
