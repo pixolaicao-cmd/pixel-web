@@ -3,12 +3,16 @@ POST /chat — AI 对话
 支持 Grok / Claude 双引擎，注入 Pixel 人格。
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from auth import verify_token
 from user_auth import get_current_user_optional
 from config import PIXEL_SYSTEM_PROMPT, XAI_API_KEY, ANTHROPIC_API_KEY, AI_ENGINE, OLLAMA_BASE_URL
 from ai_client import chat_completion, get_engine_name
+# Soul 注入逻辑与 /voice 共用一份实现，避免两条路径行为漂移
+from routes.voice import _fetch_soul, _build_soul_prompt
 
 router = APIRouter()
 
@@ -51,7 +55,7 @@ async def chat(
     _: None = Depends(verify_token),
     current_user: dict | None = Depends(get_current_user_optional),
 ):
-    """接收用户文字，注入相关记忆后返回 Pixel 的回复。"""
+    """接收用户文字，注入 Soul 人格和相关记忆后返回 Pixel 的回复。"""
     if AI_ENGINE == "grok" and not XAI_API_KEY:
         raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
     if AI_ENGINE == "claude" and not ANTHROPIC_API_KEY:
@@ -59,12 +63,18 @@ async def chat(
     if AI_ENGINE == "ollama" and not OLLAMA_BASE_URL:
         raise HTTPException(status_code=500, detail="OLLAMA_BASE_URL not configured")
 
-    # 注入记忆
+    # 注入 Soul 人格 + 记忆（两个 DB 拉取并行；supabase-py 同步，丢线程池）
     memory_context = ""
+    soul_prompt = ""
     if current_user:
-        memory_context = _fetch_memories(current_user["sub"], req.message)
+        user_id = current_user["sub"]
+        memory_context, soul = await asyncio.gather(
+            asyncio.to_thread(_fetch_memories, user_id, req.message),
+            asyncio.to_thread(_fetch_soul, user_id),
+        )
+        soul_prompt = _build_soul_prompt(soul)
 
-    system_prompt = PIXEL_SYSTEM_PROMPT + memory_context
+    system_prompt = PIXEL_SYSTEM_PROMPT + soul_prompt + memory_context
 
     reply_text = await chat_completion(
         system_prompt=system_prompt,
